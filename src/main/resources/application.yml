@@ -24,4 +24,4 @@ mediagarrd:
     qbittorrent:
       enabled: ${QBITTORRENT_ENABLED:true}
       path: /srv/sources/qbittorrent
-      graveyard-path: /srv/sources/qbittorrent-graveyard
+      saved-torrents-path: ${QBITTORRENT_SAVED_TORRENTS_PATH}

@@ -22,7 +22,11 @@ public class QBittorrentRunner extends AbstractLocalCopyRunner {
     protected List<CopySpec> copySpecs() {
         List<CopySpec> specs = new ArrayList<>();
         specs.add(dir(config.getPath(), "appdata"));
-        specs.add(dir(config.getGraveyardPath(), "graveyard"));
+
+        String savedTorrentPath = config.getSavedTorrentsPath();
+        if (savedTorrentPath != null && !savedTorrentPath.isEmpty()) {
+            specs.add(dir(savedTorrentPath, "saved-torrents"));
+        }
 
         Path compose = Path.of(config.getPath()).resolve("docker-compose.yml");
         if (Files.isRegularFile(compose)) {

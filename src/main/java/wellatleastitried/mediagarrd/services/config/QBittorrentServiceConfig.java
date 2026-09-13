@@ -2,15 +2,15 @@ package wellatleastitried.mediagarrd.services.config;
 
 public class QBittorrentServiceConfig extends AbstractServiceConfig {
 
-    private String graveyardPath;
+    private String savedTorrentsPath;
 
     // public QBittorrentServiceConfig(ServiceConfig) {}
 
-    public String getGraveyardPath() {
-        return graveyardPath;
+    public String getSavedTorrentsPath() {
+        return savedTorrentsPath;
     }
 
-    public void setGraveyardPath(String graveyardPath) {
-        this.graveyardPath = graveyardPath;
+    public void setSavedTorrentsPath(String savedTorrentsPath) {
+        this.savedTorrentsPath = savedTorrentsPath;
     }
 }

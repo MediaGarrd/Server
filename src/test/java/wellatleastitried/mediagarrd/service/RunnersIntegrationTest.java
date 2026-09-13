@@ -89,7 +89,7 @@ class RunnersIntegrationTest {
         QBittorrentServiceConfig config = new QBittorrentServiceConfig();
         config.setEnabled(true);
         config.setPath(required(env, "QBITTORRENT_PATH", "qbittorrent_path"));
-        config.setGraveyardPath(required(env, "QBITTORRENT_GRAVEYARD_PATH", "qbittorrent_graveyard_path"));
+        config.setSavedTorrentsPath(required(env, "QBITTORRENT_SAVED_TORRENTS_PATH", "qbittorrent_saved_torrents_path"));
 
         configs.put(Services.QBITTORRENT, config);
     }

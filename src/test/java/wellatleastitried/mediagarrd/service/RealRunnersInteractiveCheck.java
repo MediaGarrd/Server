@@ -95,7 +95,7 @@ public final class RealRunnersInteractiveCheck {
         }
 
         config.setPath(ask(reader, "qBittorrent base directory", "/mnt/appdata/qbittorrent"));
-        config.setGraveyardPath(ask(reader, "qBittorrent graveyard directory", "/mnt/media/graveyard"));
+        config.setSavedTorrentsPath(ask(reader, "qBittorrent saved torrents directory", "/mnt/media/saved-torrents"));
         return config;
     }
 

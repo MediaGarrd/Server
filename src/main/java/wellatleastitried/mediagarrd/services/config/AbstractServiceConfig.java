@@ -1,6 +1,6 @@
 package wellatleastitried.mediagarrd.services.config;
 
-import java.util.List;
+//import java.util.List;
 
 //@ADD_NEW_SERVICE
 abstract public class AbstractServiceConfig {
@@ -9,7 +9,7 @@ abstract public class AbstractServiceConfig {
     private String path;
     private String configPath;
 
-    private List<String> configPaths;
+    //private List<String> configPaths;
 
     public boolean isEnabled() {
         return enabled;

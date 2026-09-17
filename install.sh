@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-source ./install-util.sh
+source ./scripts/install-util.sh
 
 prompt server_port "MediaGarrd-Server host port [$PORT_DEFAULT]: " "$PORT_DEFAULT"
 prompt backup_interval "Server automatic backup interval in ISO-8601 format [$INTERVAL_DEFAULT]: " "$INTERVAL_DEFAULT"
@@ -121,7 +121,7 @@ EOF_COMPOSE
     if [[ "$qbittorrent_enabled" == "true" ]]; then
         echo "      - \"$qbittorrent_path:/srv/sources/qbittorrent:ro\""
         if [[ "$has_saved_torrents" == "true" ]]; then
-            echo "      - \"$qbittorrent_saved_torrents_path:/srv/sources/qbittorrent-torrents:ro\""
+            echo "      - \"$qbittorrent_saved_torrents_path:/srv/sources/qbittorrent-saved-torrents:ro\""
         fi
     fi
     echo "    restart: unless-stopped"

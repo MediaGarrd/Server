@@ -111,30 +111,6 @@ public abstract class AbstractLocalCopyRunner implements Runner {
                 return FileVisitResult.CONTINUE;
             }
 
-            private Set<String> databaseExtensions = Set.of(
-                ".db",
-                ".database",
-                ".mdb",
-                ".accdb",
-                ".sqlite",
-                ".sql"
-            );
-
-            private FileVisitResult handleDatabaseFile(Path source, Path destination) throws IOException {
-                // TODO: Handle database files correctly so they are not corrupted
-                Files.copy(source, destination, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
-                LOGGER.debug("[{}] Copied DB: {}", serviceName, destination);
-                return FileVisitResult.CONTINUE;
-            }
-
-            private String getExt(String filename) {
-                int dotIndex = filename.lastIndexOf('.');
-                if (dotIndex < 0 || dotIndex == filename.length() - 1) {
-                    return "";
-                }
-                return filename.substring(dotIndex).toLowerCase(Locale.ROOT);
-            }
-
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
                 Path relative = source.relativize(file);
@@ -144,10 +120,11 @@ public abstract class AbstractLocalCopyRunner implements Runner {
                     Files.createDirectories(parent);
                 }
 
-                String filename = file.getFileName().toString().toLowerCase(Locale.ROOT);
-                if (databaseExtensions.contains(getExt(filename))) {
-                        return handleDatabaseFile(file, destination);
-                }
+                // This will be used on all files including databases. There is a risk of corruption
+                // when copying a database as it could be in-use, but this is unlikely AND the fact
+                // that multiple backups will be retained mitigates this risk. This may be changed
+                // in the future with an OPTION to stop services during backup, but for now it will
+                // be a basic copy.
                 Files.copy(file, destination, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
                 LOGGER.debug("[{}] Copied: {}", serviceName, destination);
                 return FileVisitResult.CONTINUE;

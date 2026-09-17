@@ -98,7 +98,7 @@ public class RunnerFactory {
 
                 QBittorrentServiceConfig qbConfig = (QBittorrentServiceConfig) config;
                 requirePath(serviceName, "path", qbConfig.getPath());
-                requirePath(serviceName, "graveyardPath", qbConfig.getGraveyardPath());
+                requirePath(serviceName, "savedTorrentsPath", qbConfig.getSavedTorrentsPath());
                 yield null;
             }
         };

@@ -1,4 +1,4 @@
-package wellatleastitried.mediagarrd.service;
+package wellatleastitried.mediagarrdServer.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -17,11 +17,12 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import wellatleastitried.mediagarrd.Constants.Services;
-import wellatleastitried.mediagarrd.services.config.AbstractServiceConfig;
-import wellatleastitried.mediagarrd.services.config.CommonServiceConfig;
-import wellatleastitried.mediagarrd.services.config.QBittorrentServiceConfig;
-import wellatleastitried.mediagarrd.services.runner.Runner;
+import wellatleastitried.mediagarrdServer.MediaGarrdUtilities.ServiceConstants.Services;
+import wellatleastitried.mediagarrdServer.service.RunnerFactory;
+import wellatleastitried.mediagarrdServer.services.config.AbstractServiceConfig;
+import wellatleastitried.mediagarrdServer.services.config.CommonServiceConfig;
+import wellatleastitried.mediagarrdServer.services.config.QBittorrentServiceConfig;
+import wellatleastitried.mediagarrdServer.services.runner.Runner;
 
 @Tag("real-runners")
 class RunnersIntegrationTest {

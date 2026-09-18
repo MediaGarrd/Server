@@ -1,6 +1,10 @@
 # CHANGELOG
 
 ## TBD
+- Add database for keeping records of backups
+- Add issue templates
+
+## 9-16-26
 - Adding more detailed logging for service runners
 - Renaming QBittorrent's "graveyard" directory to "saved-torrents" to make it less ambiguous
 

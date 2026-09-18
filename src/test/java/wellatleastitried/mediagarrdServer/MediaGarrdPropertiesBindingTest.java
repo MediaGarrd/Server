@@ -1,4 +1,4 @@
-package wellatleastitried.mediagarrd;
+package wellatleastitried.mediagarrdServer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -9,10 +9,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
-import wellatleastitried.mediagarrd.Constants.Services;
-import wellatleastitried.mediagarrd.services.config.AbstractServiceConfig;
-import wellatleastitried.mediagarrd.services.config.CommonServiceConfig;
-import wellatleastitried.mediagarrd.services.config.QBittorrentServiceConfig;
+import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
+import wellatleastitried.mediagarrdServer.MediaGarrdUtilities.ServiceConstants.Services;
+import wellatleastitried.mediagarrdServer.services.config.AbstractServiceConfig;
+import wellatleastitried.mediagarrdServer.services.config.CommonServiceConfig;
+import wellatleastitried.mediagarrdServer.services.config.QBittorrentServiceConfig;
 
 @SpringBootTest(properties = {
     "mediagarrd.backup-root=${java.io.tmpdir}/mediagarrd-properties-test",

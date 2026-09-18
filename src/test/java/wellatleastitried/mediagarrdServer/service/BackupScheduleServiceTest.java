@@ -1,4 +1,4 @@
-package wellatleastitried.mediagarrd.service;
+package wellatleastitried.mediagarrdServer.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -8,7 +8,8 @@ import java.time.Duration;
 
 import org.junit.jupiter.api.Test;
 
-import wellatleastitried.mediagarrd.MediaGarrdProperties;
+import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
+import wellatleastitried.mediagarrdServer.service.BackupScheduleService;
 
 class BackupScheduleServiceTest {
 

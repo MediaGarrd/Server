@@ -1,4 +1,4 @@
-package wellatleastitried.mediagarrd.api;
+package wellatleastitried.mediagarrdServer.api;
 
 import static org.hamcrest.Matchers.hasSize;
 import static org.mockito.Mockito.when;
@@ -18,11 +18,12 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-import wellatleastitried.mediagarrd.MediaGarrdProperties;
-import wellatleastitried.mediagarrd.model.BackupArchive;
-import wellatleastitried.mediagarrd.model.BackupRunResult;
-import wellatleastitried.mediagarrd.service.BackupArchiveService;
-import wellatleastitried.mediagarrd.service.BackupOrchestratorService;
+import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
+import wellatleastitried.mediagarrdServer.api.BackupController;
+import wellatleastitried.mediagarrdServer.model.BackupArchive;
+import wellatleastitried.mediagarrdServer.model.BackupRunResult;
+import wellatleastitried.mediagarrdServer.service.BackupArchiveService;
+import wellatleastitried.mediagarrdServer.service.BackupOrchestratorService;
 
 @WebMvcTest(BackupController.class)
 class BackupControllerTest {

@@ -4,8 +4,6 @@ public class QBittorrentServiceConfig extends AbstractServiceConfig {
 
     private String savedTorrentsPath;
 
-    // public QBittorrentServiceConfig(ServiceConfig) {}
-
     public String getSavedTorrentsPath() {
         return savedTorrentsPath;
     }

@@ -7,25 +7,23 @@ import java.util.List;
 
 import wellatleastitried.mediagarrdServer.services.config.*;
 
-import static wellatleastitried.mediagarrd.MediaGarrdUtilities.ServiceConstants.*;
+public abstract class ArrRunner extends AbstractLocalCopyRunner {
 
-public class QBittorrentRunner extends AbstractLocalCopyRunner {
+    private final AbstractServiceConfig config;
 
-    private final QBittorrentServiceConfig config;
-
-    public QBittorrentRunner(QBittorrentServiceConfig config) {
-        super(SUPPORTED_SERVICES.get(Services.QBITTORRENT));
+    public ArrRunner(String service, AbstractServiceConfig config) {
+        super(service);
         this.config = config;
     }
 
     @Override
     protected List<CopySpec> copySpecs() {
         List<CopySpec> specs = new ArrayList<>();
-        specs.add(dir(config.getPath(), "appdata"));
+        specs.add(dir(config.getConfigPath(), "config"));
 
-        String savedTorrentPath = config.getSavedTorrentsPath();
-        if (savedTorrentPath != null && !savedTorrentPath.isEmpty()) {
-            specs.add(dir(savedTorrentPath, "saved-torrents"));
+        Path data = Path.of(config.getPath()).resolve("data");
+        if (Files.isDirectory(data)) {
+            specs.add(dir(data.toString(), "data"));
         }
 
         Path compose = Path.of(config.getPath()).resolve("docker-compose.yml");

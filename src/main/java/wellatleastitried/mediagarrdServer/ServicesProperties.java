@@ -4,7 +4,7 @@ import java.util.EnumMap;
 
 import wellatleastitried.mediagarrdServer.services.config.*;
 
-import static wellatleastitried.mediagarrd.MediaGarrdUtilities.ServiceConstants.*;
+import static wellatleastitried.mediagarrdServer.MediaGarrdUtilities.ServiceConstants.*;
 
 public class ServicesProperties {
 

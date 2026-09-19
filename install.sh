@@ -72,18 +72,32 @@ EOF_ENV
     fi
 } > "$ENV_FILE"
 
-  cat > "$SERVER_ENV_FILE" <<EOF_SERVER
+{
+    cat <<EOF_SERVER
 SERVER_PORT=$server_port
 MEDIAGARRD_BACKUP_INTERVAL=$backup_interval
 MEDIAGARRD_BACKUP_ROOT=/var/lib/mediagarrd/backups
 MEDIAGARRD_RETENTION_COUNT=$backup_retention
-JELLYFIN_ENABLED=$jellyfin_enabled
-RADARR_ENABLED=$radarr_enabled
-SONARR_ENABLED=$sonarr_enabled
-PROWLARR_ENABLED=$prowlarr_enabled
-TDARR_ENABLED=$tdarr_enabled
-QBITTORRENT_ENABLED=$qbittorrent_enabled
 EOF_SERVER
+    if [[ "$jellyfin_enabled" == "true" ]]; then
+        echo "JELLYFIN_ENABLED=true"
+    fi
+    if [[ "$radarr_enabled" == "true" ]]; then
+        echo "RADARR_ENABLED=true"
+    fi
+    if [[ "$sonarr_enabled" == "true" ]]; then
+        echo "SONARR_ENABLED=true"
+    fi
+    if [[ "$prowlarr_enabled" == "true" ]]; then
+        echo "PROWLARR_ENABLED=true"
+    fi
+    if [[ "$tdarr_enabled" == "true" ]]; then
+        echo "TDARR_ENABLED=true"
+    fi
+    if [[ "$qbittorrent_enabled" == "true" ]]; then
+        echo "QBITTORRENT_ENABLED=true"
+    fi
+} > "$SERVER_ENV_FILE"
 
   rm -f "$CLIENT_ENV_FILE"
 

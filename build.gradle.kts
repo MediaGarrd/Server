@@ -31,7 +31,7 @@ tasks.register<JavaExec>("realRunnersPromptCheck") {
     description = "Runs interactive real-environment runner checks (prompts for credentials and endpoints)."
     group = "verification"
     classpath = sourceSets["test"].runtimeClasspath
-    mainClass.set("wellatleastitried.mediagarrd.service.RealRunnersInteractiveCheck")
+    mainClass.set("wellatleastitried.mediagarrdServer.service.RealRunnersInteractiveCheck")
     standardInput = System.`in`
     dependsOn(tasks.testClasses)
 }

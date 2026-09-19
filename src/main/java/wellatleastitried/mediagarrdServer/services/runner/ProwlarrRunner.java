@@ -1,22 +1,11 @@
 package wellatleastitried.mediagarrdServer.services.runner;
 
-import java.util.List;
-
 import wellatleastitried.mediagarrdServer.services.config.*;
 
-import static wellatleastitried.mediagarrd.MediaGarrdUtilities.ServiceConstants.*;
+import static wellatleastitried.mediagarrdServer.MediaGarrdUtilities.ServiceConstants.*;
 
-public class ProwlarrRunner extends AbstractLocalCopyRunner {
-
-    private final AbstractServiceConfig config;
-
+public class ProwlarrRunner extends ArrRunner {
     public ProwlarrRunner(AbstractServiceConfig config) {
-        super(SUPPORTED_SERVICES.get(Services.PROWLARR));
-        this.config = config;
-    }
-
-    @Override
-    protected List<CopySpec> copySpecs() {
-        return List.of(dir(config.getPath(), "appdata"));
+        super(SUPPORTED_SERVICES.get(Services.PROWLARR), config);
     }
 }

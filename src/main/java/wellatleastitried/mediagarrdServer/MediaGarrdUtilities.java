@@ -1,5 +1,6 @@
 package wellatleastitried.mediagarrdServer;
 
+import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -23,16 +24,14 @@ public final class MediaGarrdUtilities {
             return formattedTime;
         }
 
-        public static int subtractTime(String startTime, String endTime) {
-        }
         public static long getDurationMs(String startTimeStr, String endTimeStr) {
             try {
-            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-            Date startDate = sdf.parse(startTimeStr);
-            Date endDate = sdf.parse(endTimeStr);
-            return endDate.getTime() - startDate.getTime();
-            } catch (ParseException pE) {
-            }
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+                Date startDate = sdf.parse(startTimeStr);
+                Date endDate = sdf.parse(endTimeStr);
+                return endDate.getTime() - startDate.getTime();
+            } catch (ParseException pE) {}
+            return -1;
         }
     }
 

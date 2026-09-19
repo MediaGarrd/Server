@@ -7,7 +7,7 @@ import java.util.List;
 
 import wellatleastitried.mediagarrdServer.services.config.*;
 
-import static wellatleastitried.mediagarrd.MediaGarrdUtilities.ServiceConstants.*;
+import static wellatleastitried.mediagarrdServer.MediaGarrdUtilities.ServiceConstants.*;
 
 public class QBittorrentRunner extends AbstractLocalCopyRunner {
 
@@ -21,7 +21,7 @@ public class QBittorrentRunner extends AbstractLocalCopyRunner {
     @Override
     protected List<CopySpec> copySpecs() {
         List<CopySpec> specs = new ArrayList<>();
-        specs.add(dir(config.getPath(), "appdata"));
+        specs.add(dir(config.getConfigPath(), "config"));
 
         String savedTorrentPath = config.getSavedTorrentsPath();
         if (savedTorrentPath != null && !savedTorrentPath.isEmpty()) {

@@ -17,7 +17,7 @@ import wellatleastitried.mediagarrdServer.model.BackupServiceResult;
 import wellatleastitried.mediagarrdServer.model.FetchedBackupRecord;
 import wellatleastitried.mediagarrdServer.model.FetchedBackupServiceRecord;
 
-import static wellatleastitried.mediagarrd.MediaGarrdUtilities.DatabaseConstants.*;
+import static wellatleastitried.mediagarrdServer.MediaGarrdUtilities.DatabaseConstants.*;
 
 @Service
 public class DatabaseService {

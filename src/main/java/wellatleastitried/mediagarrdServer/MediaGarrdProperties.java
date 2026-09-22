@@ -7,7 +7,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import wellatleastitried.mediagarrdServer.services.config.AbstractServiceConfig;
 
-import static wellatleastitried.mediagarrdServer.MediaGarrdUtilities.ServiceConstants.*;
+import static wellatleastitried.mediagarrdServer.utilities.ServiceConstants.*;
 
 @ConfigurationProperties(prefix = "mediagarrd")
 public class MediaGarrdProperties {

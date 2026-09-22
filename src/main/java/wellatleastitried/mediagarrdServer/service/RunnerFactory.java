@@ -12,7 +12,7 @@ import wellatleastitried.mediagarrdServer.services.runner.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static wellatleastitried.mediagarrdServer.MediaGarrdUtilities.ServiceConstants.*;
+import static wellatleastitried.mediagarrdServer.utilities.ServiceConstants.*;
 
 @Component
 public class RunnerFactory {

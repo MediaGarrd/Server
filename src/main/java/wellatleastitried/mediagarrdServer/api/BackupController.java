@@ -21,7 +21,6 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
-import wellatleastitried.mediagarrdServer.MediaGarrdUtilities.Utils;
 import wellatleastitried.mediagarrdServer.dto.BackupDto;
 import wellatleastitried.mediagarrdServer.dto.BackupRunDto;
 import wellatleastitried.mediagarrdServer.dto.ScheduleUpdateRequest;
@@ -33,6 +32,8 @@ import wellatleastitried.mediagarrdServer.service.BackupOrchestratorService;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import static wellatleastitried.mediagarrdServer.utilities.MediaGarrdUtils.*;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -135,7 +136,7 @@ public class BackupController {
     public BackupRunDto runBackup() {
         LOGGER.info("POST /api/v1/backups/run, triggering manual backup");
         BackupRunResult result = orchestratorService.runBackup();
-        var backupDuration = Utils.getDurationMs(result.startTime(), result.endTime());
+        var backupDuration = getDurationMs(result.startTime(), result.endTime());
         LOGGER.info("Manual backup complete: runId={}, services={}, archive={}, duration={}ms",
             result.runId(), result.serviceNames(), result.archive().fileName(),
             backupDuration);

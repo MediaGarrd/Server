@@ -6,7 +6,7 @@ This is the official server for [MediaGarrd](https://github.com/MediaGarrd/Media
 ```bash
 git clone --depth 1 https://github.com/MediaGarrd/Server.git
 cd Server
-./install.sh # Drops .env, client.env, and docker-compose.yml
+./install.sh # Drops .env, dockerenv/server.env, and docker-compose.yml
 docker compose up --build -d
 ```
 

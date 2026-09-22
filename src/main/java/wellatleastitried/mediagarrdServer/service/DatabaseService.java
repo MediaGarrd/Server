@@ -2,6 +2,7 @@ package wellatleastitried.mediagarrdServer.service;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
@@ -11,13 +12,15 @@ import org.slf4j.LoggerFactory;
 
 import org.springframework.stereotype.Service;
 
-import wellatleastitried.mediagarrdServer.MediaGarrdUtilities.Utils;
 import wellatleastitried.mediagarrdServer.model.BackupRunResult;
 import wellatleastitried.mediagarrdServer.model.BackupServiceResult;
 import wellatleastitried.mediagarrdServer.model.FetchedBackupRecord;
 import wellatleastitried.mediagarrdServer.model.FetchedBackupServiceRecord;
 
-import static wellatleastitried.mediagarrdServer.MediaGarrdUtilities.DatabaseConstants.*;
+import static wellatleastitried.mediagarrdServer.utilities.MediaGarrdUtils.*;
+import static wellatleastitried.mediagarrdServer.utilities.DatabaseUtils.*;
+
+// TODO: Add support for hosting the configuration in a table
 
 @Service
 public class DatabaseService {
@@ -26,15 +29,14 @@ public class DatabaseService {
 
     public DatabaseService() {
         verifyDatabaseIntegrity();
-        try (var connection = DriverManager.getConnection(SQLITE + databaseUrl)) {
-            connection.setAutoCommit(false);
-        } catch (Exception e) {
-            LOGGER.warn("An error occurred while disabling auto-commit on the database", e);
-        }
     }
 
-    private boolean verifyDatabaseIntegrity() {
-        try (var connection = DriverManager.getConnection(SQLITE + databaseUrl)) {
+    protected Connection getConnection() throws SQLException {
+        return DriverManager.getConnection(SQLITE + databasePath);
+    }
+
+    protected boolean verifyDatabaseIntegrity() {
+        try (var connection = getConnection()) {
             connection.setAutoCommit(false);
             ensureTablesExist(connection);
             runNeededMigrations(connection);
@@ -51,7 +53,13 @@ public class DatabaseService {
 
     private void ensureTablesExist(Connection connection) throws SQLException {
         try (var statement = connection.createStatement()) {
-            statement.execute(CREATE_TABLES);
+            for (String sql : CREATE_TABLES.split(";")) {
+                String CREATE_STATEMENT = sql.trim();
+                if (!CREATE_STATEMENT.isEmpty()) {
+                    statement.execute(CREATE_STATEMENT);
+                }
+            }
+
             connection.commit();
         } catch (SQLException sE) {
             LOGGER.warn("Failed to verify if tables exist in database.", sE);
@@ -94,7 +102,7 @@ public class DatabaseService {
         connection.commit();
     }
 
-    private int getDatabaseVersion(Connection connection) {
+    protected int getDatabaseVersion(Connection connection) {
         try (var statement = connection.createStatement();
         var result = statement.executeQuery("PRAGMA user_version")) {
 
@@ -105,8 +113,7 @@ public class DatabaseService {
         }
     }
 
-    private void setDatabaseVersion(Connection connection, int version) {
-
+    protected void setDatabaseVersion(Connection connection, int version) {
         try (var statement = connection.createStatement()) {
             statement.execute("PRAGMA user_version = " + version);
         } catch (SQLException sE) {
@@ -120,7 +127,7 @@ public class DatabaseService {
             return;
         }
 
-        try (var connection = DriverManager.getConnection(SQLITE + databaseUrl)) {
+        try (var connection = getConnection()) {
             connection.setAutoCommit(false);
             addMasterBackup(connection, backupRecord);
             addServiceBackups(connection, backupRecord.serviceResults());
@@ -138,9 +145,9 @@ public class DatabaseService {
             statement.setString(3, backupRecord.endTime());
             statement.setString(4, backupRecord.status());
             statement.setString(5, backupRecord.archive().generateChecksum());
-            statement.setString(6, backupRecord.archive().fileName());
+            statement.setString(6, backupRecord.archive().path().toString());
             statement.setInt(7, backupRecord.archive().fileSize());
-            statement.setString(8, Utils.formatTime(backupRecord.archive().createdAt()));
+            statement.setString(8, formatTime(backupRecord.archive().createdAt()));
             statement.setString(9, backupRecord.errorMessage());
             statement.executeUpdate();
             connection.commit();
@@ -170,14 +177,64 @@ public class DatabaseService {
         }
     }
 
+    private FetchedBackupRecord buildFetchedBackupRecordFromQueryResult(ResultSet rs) throws SQLException {
+        if (!rs.next()) {
+            return null;
+        }
+
+        int id = rs.getInt("id");
+        String archiveId = rs.getString("archive_id");
+        String backupStartTime = rs.getString("start_time");
+        String backupEndTime = rs.getString("end_time");
+        String status = rs.getString("status");
+        String filePath = rs.getString("file_path");
+        String errorMessage = rs.getString("error_message");
+
+        return new FetchedBackupRecord(id, archiveId, backupStartTime, backupEndTime, status, filePath, new ArrayList<FetchedBackupServiceRecord>(), errorMessage);
+    }
+
+    public FetchedBackupRecord fetchBackupById(String archiveId) {
+        if (!verifyDatabaseIntegrity()) {
+            LOGGER.warn("Could not fetch backup record by archive_id (" + archiveId + ")");
+            return null;
+        }
+
+        try (var connection = getConnection()) {
+            FetchedBackupRecord backupRecord = fetchMasterRecordById(connection, archiveId);
+            if (backupRecord == null) return null;
+
+            backupRecord = populateFetchedRecordWithServices(connection, backupRecord);
+            return backupRecord;
+        } catch  (SQLException sE) {
+            LOGGER.warn("An error occurred while fetching a backup record by archive_id (" + archiveId + ")", sE);
+        } catch (Exception e) {
+            LOGGER.warn("An unknown error occurred while fetching a backup record by archive_id (" + archiveId + ")", e);
+        }
+
+        return null;
+    }
+
+    private FetchedBackupRecord fetchMasterRecordById(Connection connection, String archiveId) {
+        try (var statement = connection.prepareStatement(FETCH_RECORD_BY_ID)) {
+            statement.setString(1, archiveId);
+            var rs = statement.executeQuery();
+            return buildFetchedBackupRecordFromQueryResult(rs);
+        } catch (SQLException sE) {
+            LOGGER.warn("Error fetching backup record by archive_id " + archiveId + ")", sE);
+            return null;
+        }
+    }
+
     public FetchedBackupRecord fetchLatestBackupRecord() {
         if (!verifyDatabaseIntegrity()) {
             LOGGER.warn("Could not fetch latest backup record");
             return null;
         }
 
-        try (var connection = DriverManager.getConnection(SQLITE + databaseUrl)) {
+        try (var connection = getConnection()) {
             FetchedBackupRecord backupRecord = fetchLatestMasterRecord(connection);
+            if (backupRecord == null) return null;
+
             backupRecord = populateFetchedRecordWithServices(connection, backupRecord);
             return backupRecord;
         } catch  (SQLException sE) {
@@ -192,11 +249,7 @@ public class DatabaseService {
     private FetchedBackupRecord fetchLatestMasterRecord(Connection connection) {
         try (var statement = connection.createStatement()) {
             var rs = statement.executeQuery(FETCH_LATEST_RECORD);
-            int id = rs.getInt("id");
-            String backupStartTime = rs.getString("start_time");
-            String status = rs.getString("status");
-            String filename = rs.getString("filename");
-            return new FetchedBackupRecord(id, backupStartTime, status, filename, new ArrayList<FetchedBackupServiceRecord>());
+            return buildFetchedBackupRecordFromQueryResult(rs);
         } catch (SQLException sE) {
             LOGGER.warn("Error fetching latest backup record", sE);
             return null;
@@ -212,16 +265,20 @@ public class DatabaseService {
                 String serviceName = rs.getString("service_name");
                 String status = rs.getString("status");
                 String startTime = rs.getString("start_time");
+                String endTime = rs.getString("end_time");
+                String errorMessage = rs.getString("error_message");
                 var serviceRecord = new FetchedBackupServiceRecord(
                     serviceName,
                     status,
-                    startTime
+                    startTime,
+                    endTime,
+                    errorMessage
                 );
                 backupRecord.fetchedServices().add(serviceRecord);
             }
             return backupRecord;
         } catch (SQLException sE) {
-            LOGGER.warn("Error fetching latest backup record", sE);
+            LOGGER.warn("Error populating backup record with related services", sE);
             return null;
         }
     }
@@ -233,4 +290,16 @@ public class DatabaseService {
             LOGGER.warn("Failed to rollback update after previous SQL failure, there is an issue with the database!");
         }
     }
+
+    public void deleteBackupRecordById(String archiveId) {
+        try (var connection = getConnection();
+            var statement = connection.prepareStatement(DELETE_BACKUP_RECORD_BY_ID)) {
+            statement.setString(1, archiveId);
+            statement.executeUpdate();
+        } catch (SQLException sE) {
+            LOGGER.warn("Error deleting a backup record with archive_id (" + archiveId + ")", sE);
+        }
+    }
+
+    // TODO: Add support to fetch all records for a report on history
 }

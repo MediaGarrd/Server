@@ -9,8 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
-import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
-import wellatleastitried.mediagarrdServer.MediaGarrdUtilities.ServiceConstants.Services;
+import wellatleastitried.mediagarrdServer.utilities.ServiceConstants.Services;
 import wellatleastitried.mediagarrdServer.services.config.AbstractServiceConfig;
 import wellatleastitried.mediagarrdServer.services.config.CommonServiceConfig;
 import wellatleastitried.mediagarrdServer.services.config.QBittorrentServiceConfig;

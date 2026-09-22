@@ -56,6 +56,7 @@ public class BackupScheduleService {
 
     private Duration safe(Duration interval) {
         if (interval == null || interval.isNegative() || interval.isZero()) {
+            // Default to 12 hours if the provided interval is invalid
             return Duration.ofHours(12);
         }
         return interval;

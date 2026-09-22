@@ -14,7 +14,7 @@ import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import wellatleastitried.mediagarrdServer.MediaGarrdUtilities.Utils;
+import static wellatleastitried.mediagarrdServer.utilities.MediaGarrdUtils.*;
 
 //@ADD_NEW_SERVICE
 public abstract class AbstractLocalCopyRunner implements Runner {
@@ -61,7 +61,7 @@ public abstract class AbstractLocalCopyRunner implements Runner {
 
     @Override
     public void run(Path outputDirectory) {
-        startTime = Utils.recordCurrentTime();
+        startTime = recordCurrentTime();
         status = "running";
         Path serviceDirectory = outputDirectory.resolve(serviceName.toLowerCase(Locale.ROOT));
         try {
@@ -91,7 +91,7 @@ public abstract class AbstractLocalCopyRunner implements Runner {
         } else {
             status = "failed";
         }
-        endTime = Utils.recordCurrentTime();
+        endTime = recordCurrentTime();
     }
 
     protected abstract List<CopySpec> copySpecs();

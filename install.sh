@@ -110,7 +110,7 @@ services:
       dockerfile: Dockerfile
     container_name: mediagarrd-server
     env_file:
-      - ./secrets/server.env
+      - ./dockerenv/server.env
     ports:
       - "$server_port:$server_port"
     volumes:
@@ -148,6 +148,6 @@ echo "Created: $SERVER_ENV_FILE"
 echo ""
 echo "Next steps:"
 echo "1. Review .env"
-echo "2. Review secrets/server.env"
+echo "2. Review dockerenv/server.env"
 echo "3. Review docker-compose.yml"
 echo "4. Start services with: docker compose up --build -d"

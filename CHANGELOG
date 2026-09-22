@@ -3,6 +3,7 @@
 ## TBD
 - Add database for keeping records of backups
 - Add issue templates
+- Removed auto-routing to appdata/ within archive to retain actual paths of configs
 
 ## 9-16-26
 - Adding more detailed logging for service runners

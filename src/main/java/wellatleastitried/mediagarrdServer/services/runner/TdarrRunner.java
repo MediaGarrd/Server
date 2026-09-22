@@ -7,7 +7,7 @@ import java.nio.file.Path;
 
 import wellatleastitried.mediagarrdServer.services.config.*;
 
-import static wellatleastitried.mediagarrdServer.MediaGarrdUtilities.ServiceConstants.*;
+import static wellatleastitried.mediagarrdServer.utilities.ServiceConstants.*;
 
 // Tdarr has a different structure than radarr/sonarr/prowlarr, so it will
 // use the AbstractLocalCopyRunner instead of ArrRunner.

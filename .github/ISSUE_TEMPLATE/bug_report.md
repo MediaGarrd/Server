@@ -2,9 +2,7 @@
 name: Bug report
 about: Create a report to help us improve
 title: "[BUG]: "
-labels: bug, needs-triage
-assignees: ''
-type: Bug
+labels: [ 'Type: Bug', 'Status: Needs Triage' ]
 
 ---
 

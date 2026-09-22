@@ -17,8 +17,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import wellatleastitried.mediagarrdServer.MediaGarrdUtilities.ServiceConstants.Services;
-import wellatleastitried.mediagarrdServer.service.RunnerFactory;
+import wellatleastitried.mediagarrdServer.utilities.ServiceConstants.Services;
 import wellatleastitried.mediagarrdServer.services.config.AbstractServiceConfig;
 import wellatleastitried.mediagarrdServer.services.config.CommonServiceConfig;
 import wellatleastitried.mediagarrdServer.services.config.QBittorrentServiceConfig;

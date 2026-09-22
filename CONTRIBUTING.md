@@ -3,7 +3,7 @@
 ## Submitting Issues
 Open an issue [here](https://github.com/MediaGarrd/Server/issues) using the template that best fits the issue.
 
-The `needs-triage` label will automatically be applied. Once this issue has been reviewed/approved, the `approved` label will be added and Pull Requests can be opened referencing this issue.
+The `Status: Needs Triage` label will automatically be applied. Once this issue has been reviewed/approved, the `Status: Approved` label will be added and Pull Requests can be opened referencing this issue.
 
 ## Pull Requests
 Pull requests should only be opened for issues that have the `approved` label.

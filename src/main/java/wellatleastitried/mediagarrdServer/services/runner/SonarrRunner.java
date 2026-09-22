@@ -2,7 +2,7 @@ package wellatleastitried.mediagarrdServer.services.runner;
 
 import wellatleastitried.mediagarrdServer.services.config.*;
 
-import static wellatleastitried.mediagarrdServer.MediaGarrdUtilities.ServiceConstants.*;
+import static wellatleastitried.mediagarrdServer.utilities.ServiceConstants.*;
 
 public class SonarrRunner extends ArrRunner {
     public SonarrRunner(AbstractServiceConfig config) {

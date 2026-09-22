@@ -1,10 +1,8 @@
 ---
 name: New service request
 about: Request a new service to be support by MediaGarrd
-title: "[ADD-SERVICE]: "
-labels: add-service, needs-triage
-assignees: ''
-type: Feature
+title: "[SERVICE]: "
+labels: [ 'Type: Add Service', 'Status: Needs Triage' ]
 
 ---
 

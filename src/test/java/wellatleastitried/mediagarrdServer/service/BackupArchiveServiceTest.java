@@ -10,7 +10,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
-import wellatleastitried.mediagarrdServer.service.BackupArchiveService;
 
 class BackupArchiveServiceTest {
 

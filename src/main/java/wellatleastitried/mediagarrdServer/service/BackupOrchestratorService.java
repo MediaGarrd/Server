@@ -15,8 +15,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import jakarta.annotation.PreDestroy;
 import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
-import wellatleastitried.mediagarrdServer.MediaGarrdUtilities.Utils;
-import wellatleastitried.mediagarrdServer.MediaGarrdUtilities.DatabaseConstants.Status;
 import wellatleastitried.mediagarrdServer.model.BackupArchive;
 import wellatleastitried.mediagarrdServer.model.BackupRunResult;
 import wellatleastitried.mediagarrdServer.model.BackupServiceResult;
@@ -26,6 +24,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import static wellatleastitried.mediagarrdServer.utilities.DatabaseUtils.Status.*;
+import static wellatleastitried.mediagarrdServer.utilities.MediaGarrdUtils.*;
 
 @Service
 public class BackupOrchestratorService {
@@ -59,6 +60,8 @@ public class BackupOrchestratorService {
         this.scheduleService = scheduleService;
         this.db = db;
     }
+
+    // TODO: Double check what this is
 
     @Scheduled(fixedDelay = 10000)
     public void scheduledRun() {
@@ -107,7 +110,7 @@ public class BackupOrchestratorService {
                 try {
                     BackupServiceResult outcome = future.get();
                     serviceRunResults.add(outcome);
-                    if (Status.COMPLETED.equals(outcome.status())) {
+                    if (COMPLETED.equals(outcome.status())) {
                         LOGGER.info("Runner succeeded: {}", outcome.serviceName());
                     } else {
                         LOGGER.warn("Runner failed (non-fatal): {}", outcome.serviceName());
@@ -121,7 +124,7 @@ public class BackupOrchestratorService {
                 }
             }
 
-            int successfulRunnerCount = (int) serviceRunResults.stream().filter(r -> Status.COMPLETED.equals(r.status())).count();
+            int successfulRunnerCount = (int) serviceRunResults.stream().filter(r -> COMPLETED.equals(r.status())).count();
             LOGGER.info(
                 "All runners finished: succeeded={}/{}",
                 successfulRunnerCount,
@@ -142,17 +145,17 @@ public class BackupOrchestratorService {
 
             String status;
             if (successfulRunnerCount == runners.size()) {
-                status = Status.COMPLETED;
+                status = COMPLETED;
             } else if (successfulRunnerCount > 0) {
-                status = Status.PARTIAL;
+                status = PARTIAL;
             } else {
-                status = Status.FAILED;
+                status = FAILED;
             }
             BackupRunResult backupRecord = new BackupRunResult(
                 archive.id(),
                 status,
-                Utils.formatTime(startedAt),
-                Utils.recordCurrentTime(),
+                formatTime(startedAt),
+                recordCurrentTime(),
                 serviceRunResults,
                 archive,
                 errorMessage

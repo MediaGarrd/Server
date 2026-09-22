@@ -4,8 +4,11 @@ import java.util.List;
 
 public record FetchedBackupRecord(
     int id,
+    String archiveId,
     String startTime,
+    String endTime,
     String status,
-    String filename,
-    List<FetchedBackupServiceRecord> fetchedServices
+    String filePath,
+    List<FetchedBackupServiceRecord> fetchedServices,
+    String errorMessage
 ) {}

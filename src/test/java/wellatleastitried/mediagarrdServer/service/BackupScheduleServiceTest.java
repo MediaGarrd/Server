@@ -9,7 +9,6 @@ import java.time.Duration;
 import org.junit.jupiter.api.Test;
 
 import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
-import wellatleastitried.mediagarrdServer.service.BackupScheduleService;
 
 class BackupScheduleServiceTest {
 

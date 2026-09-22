@@ -1,21 +1,39 @@
----
-name: Feature request
-about: Suggest an idea for this project
+name: Feature Request
+description: Suggest an idea for this project
 title: "[FEAT]: "
-labels: feature, needs-triage
-assignees: ''
-type: Feature
+labels: ['Type: Feature', 'Status: Needs Triage']
+body:
+- type: checkboxes
+  attributes:
+    label: Is there an existing issue for this?
+    description: Please search to see if an open or closed issue already exists for the feature you are requesting. If a request exists and is closed note that it may only be fixed in an unstable branch.
+    options:
+    - label: I have searched the existing open and closed issues
+      required: true
+- type: textarea
+  attributes:
+    label: Is your feature request related to a problem? Please describe
+    description: A clear and concise description of what the problem is.
+  validations:
+    required: true
+- type: textarea
+  attributes:
+    label: Describe the solution you'd like
+    description: A clear and concise description of what you want to happen.
+  validations:
+    required: true
+- type: textarea
+  attributes:
+    label: Describe alternatives you've considered
+    description: A clear and concise description of any alternative solutions or features you've considered.
+  validations:
+    required: true
+- type: textarea
+  attributes:
+    label: Anything else?
+    description: |
+      Links? References? Mockups? Anything that will give us more context about the feature you are encountering!
 
----
-
-**Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
-
-**Describe the solution you'd like**
-A clear and concise description of what you want to happen.
-
-**Describe alternatives you've considered**
-A clear and concise description of any alternative solutions or features you've considered.
-
-**Additional context**
-Add any other context or screenshots about the feature request here.
+      Tip: You can attach images or log files by clicking this area to highlight it and then dragging files in.
+  validations:
+    required: true

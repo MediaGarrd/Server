@@ -19,7 +19,6 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
-import wellatleastitried.mediagarrdServer.api.BackupController;
 import wellatleastitried.mediagarrdServer.model.BackupArchive;
 import wellatleastitried.mediagarrdServer.model.BackupRunResult;
 import wellatleastitried.mediagarrdServer.service.BackupArchiveService;
@@ -52,6 +51,7 @@ class BackupControllerTest {
 
     @Test
     void runAndListBackups() throws Exception {
+        String errorMessage = "testErrorMessage";
         BackupArchive archive = new BackupArchive(
             "backup-1",
             "backup-1.zip",
@@ -61,10 +61,12 @@ class BackupControllerTest {
         );
         BackupRunResult result = new BackupRunResult(
             "run-1",
-            Instant.parse("2026-01-01T00:00:00Z"),
-            Instant.parse("2026-01-01T00:01:00Z"),
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:01:00Z",
+            "testStatus",
             List.of(),
-            archive
+            archive,
+            errorMessage
         );
         when(orchestratorService.runBackup()).thenReturn(result);
         when(archiveService.listArchives()).thenReturn(List.of(archive));

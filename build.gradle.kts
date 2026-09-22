@@ -10,6 +10,7 @@ repositories {
 
 dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.xerial:sqlite-jdbc:3.44.0.0")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter")

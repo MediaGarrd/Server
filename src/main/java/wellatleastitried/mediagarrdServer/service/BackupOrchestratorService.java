@@ -61,9 +61,7 @@ public class BackupOrchestratorService {
         this.db = db;
     }
 
-    // TODO: Double check what this is
-
-    @Scheduled(fixedDelay = 10000)
+    @Scheduled(fixedDelay = 30000)
     public void scheduledRun() {
         if (running.get()) {
             LOGGER.debug("Scheduled check skipped, backup already in progress");

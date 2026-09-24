@@ -20,8 +20,6 @@ import wellatleastitried.mediagarrdServer.model.FetchedBackupServiceRecord;
 import static wellatleastitried.mediagarrdServer.utilities.MediaGarrdUtils.*;
 import static wellatleastitried.mediagarrdServer.utilities.DatabaseUtils.*;
 
-// TODO: Add support for hosting the configuration in a table
-
 @Service
 public class DatabaseService {
 
@@ -300,6 +298,4 @@ public class DatabaseService {
             LOGGER.warn("Error deleting a backup record with archive_id (" + archiveId + ")", sE);
         }
     }
-
-    // TODO: Add support to fetch all records for a report on history
 }

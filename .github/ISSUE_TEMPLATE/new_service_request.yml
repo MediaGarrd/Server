@@ -1,0 +1,27 @@
+name: New service request
+description: Request a new service to be supported by MediaGarrd
+title: "[SERVICE]: "
+labels: ['Type: Add Service', 'Status: Needs Triage']
+body:
+  - type: input
+    attributes:
+      label: Name of the service
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Provide a link to the service's repository
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What files would need to be backed up?
+      description: "Provide something like: config/, service.db, etc."
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Additional context
+      description: Add any other context about the new service here.
+    validations:
+      required: false

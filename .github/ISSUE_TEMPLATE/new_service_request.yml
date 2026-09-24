@@ -3,6 +3,13 @@ description: Request a new service to be supported by MediaGarrd
 title: "[SERVICE]: "
 labels: ['Type: Add Service', 'Status: Needs Triage']
 body:
+  - type: checkboxes
+    attributes:
+      label: Is there an existing issue for this?
+      description: Please search to see if an open or closed issue already exists for the feature you are requesting. If a request exists and is closed note that it may only be fixed in an unstable branch.
+      options:
+      - label: I have searched the existing open and closed issues
+        required: true
   - type: input
     attributes:
       label: Name of the service

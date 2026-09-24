@@ -2,6 +2,7 @@
 
 ## TBD
 - Add database for keeping records of backups
+- Add thorough testing of database functionality
 - Add issue templates
 - Removed auto-routing to appdata/ within archive to retain actual paths of configs
 

@@ -2,3 +2,4 @@
 
 test:
 	./gradlew test --warning-mode all
+

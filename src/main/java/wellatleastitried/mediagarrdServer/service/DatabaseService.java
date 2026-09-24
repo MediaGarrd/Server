@@ -20,8 +20,6 @@ import wellatleastitried.mediagarrdServer.model.FetchedBackupServiceRecord;
 import static wellatleastitried.mediagarrdServer.utilities.MediaGarrdUtils.*;
 import static wellatleastitried.mediagarrdServer.utilities.DatabaseUtils.*;
 
-// TODO: May need to add more tables/fields to support plugin endpoints
-
 @Service
 public class DatabaseService {
 
@@ -257,7 +255,7 @@ public class DatabaseService {
     }
 
     private FetchedBackupRecord populateFetchedRecordWithServices(Connection connection, FetchedBackupRecord backupRecord) {
-        try (var statement = connection.prepareStatement(FETCH_SERVICES_FROM_LATEST_RECORD)) {
+        try (var statement = connection.prepareStatement(FETCH_SERVICES_FROM_RECORD)) {
             statement.setInt(1, backupRecord.id());
             var rs = statement.executeQuery();
 

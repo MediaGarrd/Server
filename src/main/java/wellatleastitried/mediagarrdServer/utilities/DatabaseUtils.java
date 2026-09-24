@@ -24,28 +24,28 @@ public class DatabaseUtils {
 
     public static final String CREATE_TABLES = """
     CREATE TABLE IF NOT EXISTS backups (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    archive_id TEXT NOT NULL UNIQUE,
-    start_time DATETIME NOT NULL,
-    end_time DATETIME,
-    status TEXT NOT NULL CHECK (status IN ('completed', 'failed', 'partial')),
-    checksum TEXT,
-    file_path TEXT,
-    file_size INTEGER NOT NULL,
-    file_created_time DATETIME,
-    error_message TEXT
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        archive_id TEXT NOT NULL UNIQUE,
+        start_time DATETIME NOT NULL,
+        end_time DATETIME,
+        status TEXT NOT NULL CHECK (status IN ('completed', 'failed', 'partial')),
+        checksum TEXT,
+        file_path TEXT,
+        file_size INTEGER NOT NULL,
+        file_created_time DATETIME,
+        error_message TEXT
     );
 
     CREATE TABLE IF NOT EXISTS backup_services (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    backup_id INTEGER NOT NULL,
-    service_name TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('completed', 'failed', 'partial')),
-    start_time DATETIME,
-    end_time DATETIME,
-    error_message TEXT,
-    FOREIGN KEY (backup_id) REFERENCES backups(id) ON DELETE CASCADE,
-    UNIQUE (backup_id, service_name)
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        backup_id INTEGER NOT NULL,
+        service_name TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('completed', 'failed', 'partial')),
+        start_time DATETIME,
+        end_time DATETIME,
+        error_message TEXT,
+        FOREIGN KEY (backup_id) REFERENCES backups(id) ON DELETE CASCADE,
+        UNIQUE (backup_id, service_name)
     );
 
     CREATE INDEX IF NOT EXISTS idx_backups_start_time ON backups(start_time);
@@ -54,26 +54,26 @@ public class DatabaseUtils {
 
     public static final String ADD_BACKUP_RECORD = """
     INSERT INTO backups (
-    archive_id,
-    start_time,
-    end_time,
-    status,
-    checksum,
-    file_path,
-    file_size,
-    file_created_time,
-    error_message
+        archive_id,
+        start_time,
+        end_time,
+        status,
+        checksum,
+        file_path,
+        file_size,
+        file_created_time,
+        error_message
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
     """;
 
     public static final String ADD_BACKUP_SERVICE_RECORD = """
     INSERT INTO backup_services (
-    backup_id,
-    service_name,
-    status,
-    start_time,
-    end_time,
-    error_message
+        backup_id,
+        service_name,
+        status,
+        start_time,
+        end_time,
+        error_message
     ) VALUES (?, ?, ?, ?, ?, ?);
     """;
 
@@ -88,7 +88,7 @@ public class DatabaseUtils {
     WHERE archive_id = ?;
     """;
 
-    public static final String FETCH_SERVICES_FROM_LATEST_RECORD = """
+    public static final String FETCH_SERVICES_FROM_RECORD = """
     SELECT service_name, status, start_time, end_time, error_message FROM backup_services
     WHERE backup_id = ?;
     """;

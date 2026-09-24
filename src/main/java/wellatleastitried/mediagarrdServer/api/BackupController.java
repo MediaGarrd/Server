@@ -35,6 +35,8 @@ import org.slf4j.LoggerFactory;
 
 import static wellatleastitried.mediagarrdServer.utilities.MediaGarrdUtils.*;
 
+// TODO: Add more API endpoints for plugin compatibility
+
 @RestController
 @RequestMapping("/api/v1")
 public class BackupController {

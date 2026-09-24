@@ -20,6 +20,8 @@ import wellatleastitried.mediagarrdServer.model.FetchedBackupServiceRecord;
 import static wellatleastitried.mediagarrdServer.utilities.MediaGarrdUtils.*;
 import static wellatleastitried.mediagarrdServer.utilities.DatabaseUtils.*;
 
+// TODO: May need to add more tables/fields to support plugin endpoints
+
 @Service
 public class DatabaseService {
 

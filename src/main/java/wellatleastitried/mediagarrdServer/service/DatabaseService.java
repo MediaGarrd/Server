@@ -255,7 +255,7 @@ public class DatabaseService {
     }
 
     private FetchedBackupRecord populateFetchedRecordWithServices(Connection connection, FetchedBackupRecord backupRecord) {
-        try (var statement = connection.prepareStatement(FETCH_SERVICES_FROM_LATEST_RECORD)) {
+        try (var statement = connection.prepareStatement(FETCH_SERVICES_FROM_RECORD)) {
             statement.setInt(1, backupRecord.id());
             var rs = statement.executeQuery();
 

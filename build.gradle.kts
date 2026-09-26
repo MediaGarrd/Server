@@ -10,6 +10,7 @@ repositories {
 
 dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.xerial:sqlite-jdbc:3.44.0.0")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter")
@@ -31,7 +32,7 @@ tasks.register<JavaExec>("realRunnersPromptCheck") {
     description = "Runs interactive real-environment runner checks (prompts for credentials and endpoints)."
     group = "verification"
     classpath = sourceSets["test"].runtimeClasspath
-    mainClass.set("wellatleastitried.mediagarrd.service.RealRunnersInteractiveCheck")
+    mainClass.set("wellatleastitried.mediagarrdServer.service.RealRunnersInteractiveCheck")
     standardInput = System.`in`
     dependsOn(tasks.testClasses)
 }

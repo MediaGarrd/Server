@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SECRETS_DIR="$ROOT_DIR/secrets"
+DOCKERENV_DIR="$ROOT_DIR/dockerenv"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
 ENV_FILE="$ROOT_DIR/.env"
-SERVER_ENV_FILE="$SECRETS_DIR/server.env"
-CLIENT_ENV_FILE="$SECRETS_DIR/client.env"
+SERVER_ENV_FILE="$DOCKERENV_DIR/server.env"
+CLIENT_ENV_FILE="$DOCKERENV_DIR/client.env"
 
 PORT_DEFAULT="38471"
 INTERVAL_DEFAULT="PT12H"
@@ -15,7 +15,7 @@ BACKUP_RETENTION_DEFAULT="10"
 MNT_DIR="/mnt"
 DEFAULT_APPDATA_DIR="$MNT_DIR/appdata"
 
-mkdir -p "$SECRETS_DIR"
+mkdir -p "$DOCKERENV_DIR"
 
 prompt() {
   local var_name="$1"

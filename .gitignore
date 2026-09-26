@@ -16,6 +16,7 @@ gradle/
 
 # Prod artifacts
 secrets/
+dockerenv/
 .env
 data/
 docker-compose.yml

@@ -1,6 +1,12 @@
 # CHANGELOG
 
-## TBD
+## 9-23-26
+- Add database for keeping records of backups
+- Add thorough testing of database functionality
+- Add issue templates
+- Removed auto-routing to appdata/ within archive to retain actual paths of configs
+
+## 9-16-26
 - Adding more detailed logging for service runners
 - Renaming QBittorrent's "graveyard" directory to "saved-torrents" to make it less ambiguous
 

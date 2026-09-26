@@ -87,7 +87,6 @@ public class BackupController {
         return backups;
     }
 
-
     @GetMapping("/backups/latest")
     public BackupDto latestBackup() {
         LOGGER.info("GET /api/v1/backups/latest");

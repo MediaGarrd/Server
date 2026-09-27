@@ -1,13 +1,14 @@
 package wellatleastitried.mediagarrdServer.services.runner;
 
-import java.util.ArrayList;
-import java.util.List;
+import static wellatleastitried.mediagarrdServer.utilities.ServiceConstants.SUPPORTED_SERVICES;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
-import wellatleastitried.mediagarrdServer.services.config.*;
-
-import static wellatleastitried.mediagarrdServer.utilities.ServiceConstants.*;
+import wellatleastitried.mediagarrdServer.services.config.AbstractServiceConfig;
+import wellatleastitried.mediagarrdServer.utilities.ServiceConstants.Services;
 
 // Tdarr has a different structure than radarr/sonarr/prowlarr, so it will
 // use the AbstractLocalCopyRunner instead of ArrRunner.

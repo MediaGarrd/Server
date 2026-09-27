@@ -1,5 +1,9 @@
 package wellatleastitried.mediagarrdServer.service;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.fail;
+import static wellatleastitried.mediagarrdServer.utilities.ServiceConstants.SUPPORTED_SERVICES;
+
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.nio.file.Path;
@@ -9,21 +13,19 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import wellatleastitried.mediagarrdServer.utilities.DatabaseUtils.Status;
 import wellatleastitried.mediagarrdServer.model.BackupArchive;
 import wellatleastitried.mediagarrdServer.model.BackupRunResult;
 import wellatleastitried.mediagarrdServer.model.BackupServiceResult;
 import wellatleastitried.mediagarrdServer.model.FetchedBackupRecord;
 import wellatleastitried.mediagarrdServer.model.FetchedBackupServiceRecord;
-
-import static org.junit.jupiter.api.Assertions.*;
-
-import static wellatleastitried.mediagarrdServer.utilities.ServiceConstants.*;
+import wellatleastitried.mediagarrdServer.utilities.ServiceConstants.Services;
+import wellatleastitried.mediagarrdServer.utilities.database.DatabaseUtils.Status;
 
 public class DatabaseServiceTest {
 
@@ -118,7 +120,8 @@ public class DatabaseServiceTest {
 
         databaseService.addNewBackupRecord(testBackupRecord);
 
-        FetchedBackupRecord testRecord = databaseService.fetchBackupById(testArchive.id());
+        Optional<FetchedBackupRecord> optionalTestRecord = databaseService.fetchBackupById(testArchive.id());
+        FetchedBackupRecord testRecord = optionalTestRecord.isPresent() ? optionalTestRecord.orElseThrow() : null;
 
         assertEquals(testBackupId, testRecord.archiveId());
         assertEquals(testFilePath.toString(), testRecord.filePath());
@@ -152,8 +155,8 @@ public class DatabaseServiceTest {
         BackupRunResult testBackupRecord = buildTestBackupRunResult();
         databaseService.addNewBackupRecord(testBackupRecord);
         databaseService.deleteBackupRecordById(testBackupRecord.runId());
-        FetchedBackupRecord testFetchedBackupRecord = databaseService.fetchBackupById(testBackupRecord.runId());
-
-        assertEquals(null, testFetchedBackupRecord);
+        Optional<FetchedBackupRecord> optionalTestFetchedBackupRecord = databaseService.fetchBackupById(testBackupRecord.runId());
+        assertEquals(true, optionalTestFetchedBackupRecord.isEmpty());
+        System.out.println("TEST");
     }
 }

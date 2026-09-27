@@ -1,9 +1,13 @@
 package wellatleastitried.mediagarrdServer.api;
 
+import static wellatleastitried.mediagarrdServer.utilities.MediaGarrdUtils.getDurationMs;
+
 import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -29,11 +33,6 @@ import wellatleastitried.mediagarrdServer.model.BackupArchive;
 import wellatleastitried.mediagarrdServer.model.BackupRunResult;
 import wellatleastitried.mediagarrdServer.service.BackupArchiveService;
 import wellatleastitried.mediagarrdServer.service.BackupOrchestratorService;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import static wellatleastitried.mediagarrdServer.utilities.MediaGarrdUtils.*;
 
 @RestController
 @RequestMapping("/api/v1")

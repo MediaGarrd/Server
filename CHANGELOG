@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## TBD
+- Fixed logic issue with migration versioning
+- Added Structurizr diagrams to visualize workflow
+- Added Lombok for simpler model classes
+
 ## 9-23-26
 - Add database for keeping records of backups
 - Add thorough testing of database functionality

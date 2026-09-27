@@ -1,5 +1,10 @@
 package wellatleastitried.mediagarrdServer.model;
 
+import lombok.Getter;
+import lombok.experimental.Accessors;
+
+@Accessors(fluent = true)
+@Getter
 public class BackupServiceResult {
     private String runId;
     private final String status;
@@ -26,25 +31,5 @@ public class BackupServiceResult {
 
     public void setId(String runId) {
         this.runId = runId;
-    }
-
-    public String runId() {
-        return runId;
-    }
-
-    public String status() {
-        return status;
-    }
-    public String startTime() {
-        return startTime;
-    }
-    public String endTime() {
-        return endTime;
-    }
-    public String serviceName() {
-        return serviceName;
-    }
-    public String errorMessage() {
-        return errorMessage;
     }
 }

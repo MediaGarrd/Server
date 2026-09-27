@@ -8,11 +8,11 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
 
-import wellatleastitried.mediagarrdServer.utilities.ServiceConstants.Services;
 import wellatleastitried.mediagarrdServer.services.config.AbstractServiceConfig;
 import wellatleastitried.mediagarrdServer.services.config.CommonServiceConfig;
 import wellatleastitried.mediagarrdServer.services.config.QBittorrentServiceConfig;
 import wellatleastitried.mediagarrdServer.services.runner.Runner;
+import wellatleastitried.mediagarrdServer.utilities.ServiceConstants.Services;
 
 public final class RealRunnersInteractiveCheck {
 

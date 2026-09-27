@@ -1,13 +1,14 @@
 package wellatleastitried.mediagarrdServer.services.runner;
 
+import static wellatleastitried.mediagarrdServer.utilities.ServiceConstants.SUPPORTED_SERVICES;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-import wellatleastitried.mediagarrdServer.services.config.*;
-
-import static wellatleastitried.mediagarrdServer.utilities.ServiceConstants.*;
+import wellatleastitried.mediagarrdServer.services.config.QBittorrentServiceConfig;
+import wellatleastitried.mediagarrdServer.utilities.ServiceConstants.Services;
 
 public class QBittorrentRunner extends AbstractLocalCopyRunner {
 

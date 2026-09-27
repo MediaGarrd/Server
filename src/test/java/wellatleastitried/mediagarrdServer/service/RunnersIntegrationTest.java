@@ -17,11 +17,11 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import wellatleastitried.mediagarrdServer.utilities.ServiceConstants.Services;
 import wellatleastitried.mediagarrdServer.services.config.AbstractServiceConfig;
 import wellatleastitried.mediagarrdServer.services.config.CommonServiceConfig;
 import wellatleastitried.mediagarrdServer.services.config.QBittorrentServiceConfig;
 import wellatleastitried.mediagarrdServer.services.runner.Runner;
+import wellatleastitried.mediagarrdServer.utilities.ServiceConstants.Services;
 
 @Tag("real-runners")
 class RunnersIntegrationTest {

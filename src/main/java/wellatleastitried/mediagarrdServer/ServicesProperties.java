@@ -2,9 +2,10 @@ package wellatleastitried.mediagarrdServer;
 
 import java.util.EnumMap;
 
-import wellatleastitried.mediagarrdServer.services.config.*;
-
-import static wellatleastitried.mediagarrdServer.utilities.ServiceConstants.*;
+import wellatleastitried.mediagarrdServer.services.config.AbstractServiceConfig;
+import wellatleastitried.mediagarrdServer.services.config.CommonServiceConfig;
+import wellatleastitried.mediagarrdServer.services.config.QBittorrentServiceConfig;
+import wellatleastitried.mediagarrdServer.utilities.ServiceConstants.Services;
 
 public class ServicesProperties {
 

@@ -1,27 +1,17 @@
 package wellatleastitried.mediagarrdServer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
-import java.util.EnumMap;
+import java.time.Duration;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
-import wellatleastitried.mediagarrdServer.services.config.AbstractServiceConfig;
-import wellatleastitried.mediagarrdServer.services.config.CommonServiceConfig;
-import wellatleastitried.mediagarrdServer.services.config.QBittorrentServiceConfig;
-import wellatleastitried.mediagarrdServer.utilities.ServiceConstants.Services;
-
 @SpringBootTest(properties = {
-    "mediagarrd.backup-root=${java.io.tmpdir}/mediagarrd-properties-test",
-    "mediagarrd.services.jellyfin.enabled=false",
-    "mediagarrd.services.radarr.enabled=false",
-    "mediagarrd.services.sonarr.enabled=false",
-    "mediagarrd.services.prowlarr.enabled=false",
-    "mediagarrd.services.tdarr.enabled=false",
-    "mediagarrd.services.qbittorrent.enabled=false"
+    "mediagarrd.backup-root=${java.io.tmpdir}/mediagarrd-binding-test/backups",
+    "mediagarrd.database-path=${java.io.tmpdir}/mediagarrd-binding-test/mediagarrd.db",
+    "mediagarrd.helper-image=alpine:3"
 })
 class MediaGarrdPropertiesBindingTest {
 
@@ -29,11 +19,13 @@ class MediaGarrdPropertiesBindingTest {
     private MediaGarrdProperties properties;
 
     @Test
-    void bindsConcreteServiceConfigurations() {
-        EnumMap<Services, AbstractServiceConfig> configs = properties.getServiceConfigs();
+    void bindsApplicationProperties() {
+        String tmp = System.getProperty("java.io.tmpdir");
 
-        assertEquals(6, configs.size());
-        assertInstanceOf(CommonServiceConfig.class, configs.get(Services.RADARR));
-        assertInstanceOf(QBittorrentServiceConfig.class, configs.get(Services.QBITTORRENT));
+        assertEquals(Duration.ofHours(12), properties.getBackupInterval());
+        assertEquals(10, properties.getRetentionCount());
+        assertEquals(tmp + "/mediagarrd-binding-test/backups", properties.getBackupRoot());
+        assertEquals(tmp + "/mediagarrd-binding-test/mediagarrd.db", properties.getDatabasePath());
+        assertEquals("alpine:3", properties.getHelperImage());
     }
 }

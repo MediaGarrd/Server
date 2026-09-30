@@ -4,6 +4,21 @@
 - Fixed logic issue with migration versioning
 - Added Structurizr diagrams to visualize workflow
 - Added Lombok for simpler model classes
+- Services are now stored in the database and managed from the `/config` web page or `/api/v1/services`, any service can be backed up
+- Backup location can be changed at runtime from `/config` or `PUT /api/v1/config`
+- Replaced the per-service runners with a single runner that copies each service's paths through a cached, read-only helper container via the Docker socket
+- Added integration test and issue label workflows
+- Added first-time web setup reachable from the network, unlocked with a single-use PIN printed in the server logs and disabled once setup is finished
+- `docker-compose.example.yml` now works without `install.sh`
+- Backup interval and retention count are now stored in the database, retention is settable through `PUT /api/v1/config`, and `GET /api/v1/config` returns every setting
+- Configuration changes are rejected while a backup is running so a run never sees its services change underneath it
+- Added a pull request check that requires every linked issue to be approved
+- Backup archives are laid out by absolute host path with no per-service folder, so they can be restored with `bsdtar -xpf <archive> -C /`
+- Archives keep permissions, owners, modification times, symbolic links, and empty directories, and a path that fails to copy no longer leaves partial files in the archive
+- Fixed special files (pipes, devices) being archived as empty regular files
+- Fixed backup checksums loading the whole archive into memory and dropping leading zeros, and archive sizes over 2 GB being recorded incorrectly
+- Every API endpoint now returns errors as `{"error": "..."}` with a matching status code
+- The database schema is verified once and then re-checked with a single query per call, rebuilding or upgrading the database whenever it is deleted, altered, or replaced, and moving a corrupt database aside
 
 ## 9-23-26
 - Add database for keeping records of backups

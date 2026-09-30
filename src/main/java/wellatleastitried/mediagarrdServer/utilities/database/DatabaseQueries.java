@@ -31,6 +31,17 @@ public class DatabaseQueries {
         UNIQUE (backup_id, service_name)
     );
 
+    CREATE TABLE IF NOT EXISTS services (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        paths TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_backups_start_time ON backups(start_time);
     CREATE INDEX IF NOT EXISTS idx_backup_services_service_name ON backup_services(service_name);
     """;
@@ -81,11 +92,46 @@ public class DatabaseQueries {
     WHERE archive_id = ?;
     """;
 
+    public static final String FETCH_ALL_SERVICES = """
+    SELECT name, paths FROM services
+    ORDER BY name COLLATE NOCASE;
+    """;
+
+    public static final String FETCH_SERVICE_BY_NAME = """
+    SELECT name, paths FROM services
+    WHERE name = ?;
+    """;
+
+    public static final String ADD_SERVICE = """
+    INSERT INTO services (name, paths) VALUES (?, ?);
+    """;
+
+    public static final String UPDATE_SERVICE = """
+    UPDATE services SET name = ?, paths = ?
+    WHERE name = ?;
+    """;
+
+    public static final String DELETE_SERVICE = """
+    DELETE FROM services
+    WHERE name = ?;
+    """;
+
+    public static final String FETCH_SETTING = """
+    SELECT value FROM settings
+    WHERE key = ?;
+    """;
+
+    public static final String UPSERT_SETTING = """
+    INSERT INTO settings (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+    """;
+
     public record Migration(int version, String sql) {}
 
     public static final List<Migration> MIGRATIONS;
     static {
         MIGRATIONS = new ArrayList<Migration>();
         // Migration versions will start at 2, as the initial tables will be schema v1
+        MIGRATIONS.add(new Migration(2, "DELETE FROM backup_services WHERE backup_id NOT IN (SELECT id FROM backups)"));
     }
 }

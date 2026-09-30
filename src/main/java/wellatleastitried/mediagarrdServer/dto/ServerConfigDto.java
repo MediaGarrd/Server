@@ -1,5 +1,5 @@
 package wellatleastitried.mediagarrdServer.dto;
 
-import wellatleastitried.mediagarrdServer.MediaGarrdConfig;
+import java.time.Duration;
 
-public record ServerConfigDto(MediaGarrdConfig config) {}
+public record ServerConfigDto(String backupLocation, int retentionCount, Duration backupInterval) {}

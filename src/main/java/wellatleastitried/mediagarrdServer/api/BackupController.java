@@ -24,7 +24,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
-import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
 import wellatleastitried.mediagarrdServer.dto.BackupDto;
 import wellatleastitried.mediagarrdServer.dto.BackupRunDto;
 import wellatleastitried.mediagarrdServer.dto.ScheduleUpdateRequest;
@@ -42,27 +41,16 @@ public class BackupController {
 
     private final BackupArchiveService archiveService;
     private final BackupOrchestratorService orchestratorService;
-    private final MediaGarrdProperties properties;
 
-    public BackupController(
-        BackupArchiveService archiveService,
-        BackupOrchestratorService orchestratorService,
-        MediaGarrdProperties properties
-    ) {
+    public BackupController(BackupArchiveService archiveService, BackupOrchestratorService orchestratorService) {
         this.archiveService = archiveService;
         this.orchestratorService = orchestratorService;
-        this.properties = properties;
     }
 
     @GetMapping("/health")
     public ServerStatusDto health() {
         LOGGER.info("GET /api/v1/health, running={}, interval={}", orchestratorService.isRunning(), orchestratorService.getInterval());
-        return new ServerStatusDto(
-            true,
-            orchestratorService.isRunning(),
-            properties.getRetentionCount(),
-            orchestratorService.getInterval()
-        );
+        return status(orchestratorService.getInterval());
     }
 
     @PutMapping("/schedule")
@@ -70,12 +58,7 @@ public class BackupController {
         LOGGER.info("PUT /api/v1/schedule, requestedInterval={}", request.backupInterval());
         Duration updated = orchestratorService.updateInterval(request.backupInterval());
         LOGGER.info("Schedule updated: newInterval={}", updated);
-        return new ServerStatusDto(
-            true,
-            orchestratorService.isRunning(),
-            properties.getRetentionCount(),
-            updated
-        );
+        return status(updated);
     }
 
     @GetMapping("/backups")
@@ -166,6 +149,10 @@ public class BackupController {
             LOGGER.error("Failed to read backup file: {}", archive.path(), e);
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to read backup file");
         }
+    }
+
+    private ServerStatusDto status(Duration interval) {
+        return new ServerStatusDto(true, orchestratorService.isRunning(), archiveService.retentionCount(), interval);
     }
 
     private BackupDto toDto(BackupArchive archive) {

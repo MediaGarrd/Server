@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MediaGarrd Server Configuration</title>
+  <link rel="stylesheet" href="/css/mediagarrd.css">
+  <script type="module" src="/js/config.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-title">MediaGarrd</span>
+      <span class="brand-sub">Server Configuration</span>
+    </div>
+  </header>
+
+  <dialog class="panel" id="pinDialog">
+    <div class="panel-header"><span class="panel-title">Setup PIN</span></div>
+    <form class="panel-body">
+      <div class="field-group">
+        <label class="field-label" for="pin">Enter the PIN printed in the server logs</label>
+        <input id="pin" name="pin" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" title="The 6-digit PIN from the server logs" required>
+        <p class="note error-text" data-error></p>
+      </div>
+      <button type="submit">Unlock</button>
+    </form>
+  </dialog>
+
+  <main class="workspace" hidden>
+    <div class="banner" id="banner" role="status"></div>
+
+    <div class="stack" data-setup>
+      <section class="panel">
+        <div class="panel-header"><span class="panel-title">Backup Settings</span></div>
+        <form class="panel-body" id="settingsForm">
+          <div class="field-group">
+            <label class="field-label" for="backupLocation">Backup location inside the server container</label>
+            <input id="backupLocation" name="backupLocation" pattern="/.*" title="An absolute path starting with /" required>
+            <p class="note">Must be on a mounted volume, otherwise archives are lost when the container is recreated.</p>
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="intervalHours">Hours between backups</label>
+            <input id="intervalHours" name="intervalHours" type="number" min="0.25" step="0.25" required>
+          </div>
+          <div class="field-group">
+            <label class="field-label" for="retentionCount">Backups to keep</label>
+            <input id="retentionCount" name="retentionCount" type="number" min="1" step="1" required>
+          </div>
+          <div class="button-row"><button type="submit">Save Settings</button></div>
+        </form>
+      </section>
+
+      <section class="panel" id="finish">
+        <div class="panel-header"><span class="panel-title">Finish Setup</span></div>
+        <div class="panel-body">
+          <p class="note">Once finished, this page is disabled. Later changes go through the API or the MediaGarrd Client.</p>
+          <div class="button-row"><button type="button">Finish Setup</button></div>
+        </div>
+      </section>
+    </div>
+
+    <section class="panel" id="services" data-setup>
+      <div class="panel-header"><span class="panel-title" data-form-title>Add Service</span></div>
+      <form class="panel-body">
+        <div class="field-group">
+          <label class="field-label" for="serviceName">Name</label>
+          <input id="serviceName" name="name" placeholder="radarr" pattern="[A-Za-z0-9][A-Za-z0-9_.\-]{0,63}" title="Up to 64 letters, digits, '.', '_' or '-', starting with a letter or digit" required>
+        </div>
+        <div class="field-group">
+          <span class="field-label">Host paths to back up</span>
+          <div class="field-group" data-paths></div>
+          <button type="button" class="ghost" data-add-path>+ Add Path</button>
+        </div>
+        <div class="button-row">
+          <button type="submit">Save Service</button>
+          <button type="button" class="ghost" data-cancel hidden>Cancel</button>
+        </div>
+      </form>
+
+      <template id="pathTemplate">
+        <div class="input-row">
+          <input name="path" placeholder="/srv/appdata/radarr/config" pattern="/.+" title="An absolute host path starting with /" required>
+          <button type="button" class="ghost" title="Remove path">&times;</button>
+        </div>
+      </template>
+
+      <template id="serviceTemplate">
+        <tr>
+          <td data-name></td>
+          <td class="td-mono" data-paths></td>
+          <td class="actions-cell">
+            <button type="button" class="ghost" data-edit>Edit</button>
+            <button type="button" class="danger" data-remove>Remove</button>
+          </td>
+        </tr>
+      </template>
+
+      <div class="panel-header"><span class="panel-title">Configured Services</span></div>
+      <table>
+        <thead><tr><th>Name</th><th>Paths</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="empty-state" data-empty>No services configured yet.</p>
+    </section>
+  </main>
+</body>
+</html>

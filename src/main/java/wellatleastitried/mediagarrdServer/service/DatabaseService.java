@@ -1,24 +1,34 @@
 package wellatleastitried.mediagarrdServer.service;
 
+import static wellatleastitried.mediagarrdServer.utilities.MediaGarrdUtils.formatTime;
+import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseQueries.ADD_BACKUP_RECORD;
+import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseQueries.ADD_BACKUP_SERVICE_RECORD;
+import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseQueries.CREATE_TABLES;
+import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseQueries.DELETE_BACKUP_RECORD_BY_ID;
+import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseQueries.FETCH_LATEST_RECORD;
+import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseQueries.FETCH_RECORD_BY_ID;
+import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseQueries.FETCH_SERVICES_FROM_RECORD;
+import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseQueries.MIGRATIONS;
+import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseUtils.SQLITE;
+import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseUtils.databasePath;
+
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.springframework.stereotype.Service;
 
 import wellatleastitried.mediagarrdServer.model.BackupRunResult;
 import wellatleastitried.mediagarrdServer.model.BackupServiceResult;
 import wellatleastitried.mediagarrdServer.model.FetchedBackupRecord;
 import wellatleastitried.mediagarrdServer.model.FetchedBackupServiceRecord;
-
-import static wellatleastitried.mediagarrdServer.utilities.MediaGarrdUtils.*;
-import static wellatleastitried.mediagarrdServer.utilities.DatabaseUtils.*;
+import wellatleastitried.mediagarrdServer.utilities.database.DatabaseQueries.Migration;
 
 @Service
 public class DatabaseService {
@@ -78,7 +88,7 @@ public class DatabaseService {
         }
 
         for (Migration migration : MIGRATIONS) {
-            if (currentVersion <= migration.version()) {
+            if (currentVersion > migration.version()) {
                 continue;
             }
 
@@ -191,25 +201,24 @@ public class DatabaseService {
         return new FetchedBackupRecord(id, archiveId, backupStartTime, backupEndTime, status, filePath, new ArrayList<FetchedBackupServiceRecord>(), errorMessage);
     }
 
-    public FetchedBackupRecord fetchBackupById(String archiveId) {
+    public Optional<FetchedBackupRecord> fetchBackupById(String archiveId) {
+        FetchedBackupRecord backupRecord = null;
         if (!verifyDatabaseIntegrity()) {
             LOGGER.warn("Could not fetch backup record by archive_id (" + archiveId + ")");
-            return null;
+        } else {
+            try (var connection = getConnection()) {
+                backupRecord = fetchMasterRecordById(connection, archiveId);
+                if (backupRecord != null) {
+                    backupRecord = populateFetchedRecordWithServices(connection, backupRecord);
+                }
+            } catch  (SQLException sE) {
+                LOGGER.warn("An error occurred while fetching a backup record by archive_id (" + archiveId + ")", sE);
+            } catch (Exception e) {
+                LOGGER.warn("An unknown error occurred while fetching a backup record by archive_id (" + archiveId + ")", e);
+            }
         }
 
-        try (var connection = getConnection()) {
-            FetchedBackupRecord backupRecord = fetchMasterRecordById(connection, archiveId);
-            if (backupRecord == null) return null;
-
-            backupRecord = populateFetchedRecordWithServices(connection, backupRecord);
-            return backupRecord;
-        } catch  (SQLException sE) {
-            LOGGER.warn("An error occurred while fetching a backup record by archive_id (" + archiveId + ")", sE);
-        } catch (Exception e) {
-            LOGGER.warn("An unknown error occurred while fetching a backup record by archive_id (" + archiveId + ")", e);
-        }
-
-        return null;
+        return Optional.ofNullable(backupRecord);
     }
 
     private FetchedBackupRecord fetchMasterRecordById(Connection connection, String archiveId) {
@@ -223,25 +232,24 @@ public class DatabaseService {
         }
     }
 
-    public FetchedBackupRecord fetchLatestBackupRecord() {
+    public Optional<FetchedBackupRecord> fetchLatestBackupRecord() {
+        FetchedBackupRecord backupRecord = null;
         if (!verifyDatabaseIntegrity()) {
             LOGGER.warn("Could not fetch latest backup record");
-            return null;
+        } else {
+            try (var connection = getConnection()) {
+                backupRecord = fetchLatestMasterRecord(connection);
+                if (backupRecord != null) {
+                    backupRecord = populateFetchedRecordWithServices(connection, backupRecord);
+                }
+            } catch  (SQLException sE) {
+                LOGGER.warn("An error occurred while fetching the latest backup record", sE);
+            } catch (Exception e) {
+                LOGGER.warn("An unknown error occurred while fetching the latest backup record", e);
+            }
         }
 
-        try (var connection = getConnection()) {
-            FetchedBackupRecord backupRecord = fetchLatestMasterRecord(connection);
-            if (backupRecord == null) return null;
-
-            backupRecord = populateFetchedRecordWithServices(connection, backupRecord);
-            return backupRecord;
-        } catch  (SQLException sE) {
-            LOGGER.warn("An error occurred while fetching the latest backup record", sE);
-        } catch (Exception e) {
-            LOGGER.warn("An unknown error occurred while fetching the latest backup record", e);
-        }
-
-        return null;
+        return Optional.ofNullable(backupRecord);
     }
 
     private FetchedBackupRecord fetchLatestMasterRecord(Connection connection) {

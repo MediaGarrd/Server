@@ -20,3 +20,5 @@ dockerenv/
 .env
 data/
 docker-compose.yml
+ref/structurizr/*.json
+ref/structurizr/.structurizr/

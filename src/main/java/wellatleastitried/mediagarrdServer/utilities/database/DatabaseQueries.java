@@ -1,26 +1,9 @@
-package wellatleastitried.mediagarrdServer.utilities;
+package wellatleastitried.mediagarrdServer.utilities.database;
 
 import java.util.ArrayList;
 import java.util.List;
 
-public class DatabaseUtils {
-
-    public record Migration(int version, String sql) {}
-    public static final List<Migration> MIGRATIONS;
-    static {
-        MIGRATIONS = new ArrayList<Migration>();
-        // Migration versions will start at 2, as the initial tables will be schema v1
-    }
-
-    public static final String SQLITE = "jdbc:sqlite:";
-    public static final String databasePath = "/var/lib/mediagarrd/mediagarrd.db";
-
-    // Status used for the overall backup AND the individual service runners
-    public class Status {
-        public static final String COMPLETED = "completed";
-        public static final String PARTIAL = "partial";
-        public static final String FAILED = "failed";
-    }
+public class DatabaseQueries {
 
     public static final String CREATE_TABLES = """
     CREATE TABLE IF NOT EXISTS backups (
@@ -97,4 +80,12 @@ public class DatabaseUtils {
     DELETE FROM backups
     WHERE archive_id = ?;
     """;
+
+    public record Migration(int version, String sql) {}
+
+    public static final List<Migration> MIGRATIONS;
+    static {
+        MIGRATIONS = new ArrayList<Migration>();
+        // Migration versions will start at 2, as the initial tables will be schema v1
+    }
 }

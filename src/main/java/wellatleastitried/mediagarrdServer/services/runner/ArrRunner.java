@@ -5,7 +5,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-import wellatleastitried.mediagarrdServer.services.config.*;
+import wellatleastitried.mediagarrdServer.services.config.AbstractServiceConfig;
 
 public abstract class ArrRunner extends AbstractLocalCopyRunner {
 

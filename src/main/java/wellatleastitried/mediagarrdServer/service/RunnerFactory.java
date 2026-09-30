@@ -1,18 +1,25 @@
 package wellatleastitried.mediagarrdServer.service;
 
+import static wellatleastitried.mediagarrdServer.utilities.ServiceConstants.SUPPORTED_SERVICES;
+
 import java.util.ArrayList;
-import java.util.List;
 import java.util.EnumMap;
-
-import org.springframework.stereotype.Component;
-
-import wellatleastitried.mediagarrdServer.services.config.*;
-import wellatleastitried.mediagarrdServer.services.runner.*;
+import java.util.List;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
 
-import static wellatleastitried.mediagarrdServer.utilities.ServiceConstants.*;
+import wellatleastitried.mediagarrdServer.services.config.AbstractServiceConfig;
+import wellatleastitried.mediagarrdServer.services.config.QBittorrentServiceConfig;
+import wellatleastitried.mediagarrdServer.services.runner.JellyfinRunner;
+import wellatleastitried.mediagarrdServer.services.runner.ProwlarrRunner;
+import wellatleastitried.mediagarrdServer.services.runner.QBittorrentRunner;
+import wellatleastitried.mediagarrdServer.services.runner.RadarrRunner;
+import wellatleastitried.mediagarrdServer.services.runner.Runner;
+import wellatleastitried.mediagarrdServer.services.runner.SonarrRunner;
+import wellatleastitried.mediagarrdServer.services.runner.TdarrRunner;
+import wellatleastitried.mediagarrdServer.utilities.ServiceConstants.Services;
 
 @Component
 public class RunnerFactory {

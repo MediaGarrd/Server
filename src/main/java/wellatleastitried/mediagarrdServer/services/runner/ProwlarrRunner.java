@@ -1,8 +1,9 @@
 package wellatleastitried.mediagarrdServer.services.runner;
 
-import wellatleastitried.mediagarrdServer.services.config.*;
+import static wellatleastitried.mediagarrdServer.utilities.ServiceConstants.SUPPORTED_SERVICES;
 
-import static wellatleastitried.mediagarrdServer.utilities.ServiceConstants.*;
+import wellatleastitried.mediagarrdServer.services.config.AbstractServiceConfig;
+import wellatleastitried.mediagarrdServer.utilities.ServiceConstants.Services;
 
 public class ProwlarrRunner extends ArrRunner {
     public ProwlarrRunner(AbstractServiceConfig config) {

@@ -2,6 +2,11 @@ package wellatleastitried.mediagarrdServer.model;
 
 import java.util.List;
 
+import lombok.Getter;
+import lombok.experimental.Accessors;
+
+@Accessors(fluent = true)
+@Getter
 public class BackupRunResult {
     private final String runId;
     private final String startTime;
@@ -29,35 +34,7 @@ public class BackupRunResult {
         this.errorMessage = errorMessage;
     }
 
-    public String runId() {
-        return runId;
-    }
-
-    public String status() {
-        return status;
-    }
-
-    public String startTime() {
-        return startTime;
-    }
-
-    public String endTime() {
-        return endTime;
-    }
-
-    public List<BackupServiceResult> serviceResults() {
-        return serviceResults;
-    }
-
     public List<String> serviceNames() {
         return serviceResults.stream().map(BackupServiceResult::serviceName).toList();
-    }
-
-    public BackupArchive archive() {
-        return archive;
-    }
-
-    public String errorMessage() {
-        return errorMessage;
     }
 }

@@ -1,4 +1,5 @@
 /gradlew        text eol=lf
 *.bat           text eol=crlf
 *.jar           binary
+src/main/java/wellatleastitried/mediagarrdServer/utilities/database/DatabaseQueries.java linguist-language=SQL
 

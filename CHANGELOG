@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## TBD
+## 10-26-26
 - Fixed logic issue with migration versioning
 - Added Structurizr diagrams to visualize workflow
 - Added Lombok for simpler model classes

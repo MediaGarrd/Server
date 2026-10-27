@@ -35,9 +35,9 @@ import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
 import org.sqlite.SQLiteErrorCode;
 import org.sqlite.SQLiteException;
-import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -59,8 +59,10 @@ public class DatabaseService {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final TypeReference<List<String>> PATH_LIST = new TypeReference<>() {};
 
-    private static final DateTimeFormatter QUARANTINE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
+    private static final DateTimeFormatter QUARANTINE_FORMAT = DateTimeFormatter
+        .ofPattern("yyyyMMdd-HHmmss")
         .withZone(ZoneOffset.UTC);
+
     private static final List<String> DATABASE_FILE_SUFFIXES = List.of("", "-journal", "-wal", "-shm");
 
     private final Path databaseFile;

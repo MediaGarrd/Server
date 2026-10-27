@@ -1,31 +1,36 @@
 package wellatleastitried.mediagarrdServer.service;
 
+import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseUtils.BACKUP_ROOT_SETTING;
+import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseUtils.RETENTION_COUNT_SETTING;
+
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.SortedMap;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
+
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream;
+import org.apache.commons.compress.archivers.zip.ZipFile;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PostConstruct;
 import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
 import wellatleastitried.mediagarrdServer.model.BackupArchive;
-
-import org.springframework.stereotype.Service;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 @Service
 public class BackupArchiveService {
@@ -35,13 +40,22 @@ public class BackupArchiveService {
     private static final DateTimeFormatter FILE_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS")
         .withZone(ZoneOffset.UTC);
     private static final long ARCHIVE_CACHE_TTL_MS = 60_000;  // Cache archive list for 60 seconds
+    static final String ARCHIVE_SUFFIX = "-media-backup.zip";
 
-    private final MediaGarrdProperties properties;
+    private final DatabaseService db;
     private final AtomicReference<List<BackupArchive>> cachedArchives = new AtomicReference<>(null);
     private final AtomicLong cacheLastUpdatedMs = new AtomicLong(0);
+    private volatile Path root;
+    private volatile int retentionCount;
 
-    public BackupArchiveService(MediaGarrdProperties properties) {
-        this.properties = properties;
+    public BackupArchiveService(MediaGarrdProperties properties, DatabaseService db) {
+        this.db = db;
+        this.root = Path.of(db.fetchSetting(BACKUP_ROOT_SETTING).orElse(properties.getBackupRoot()))
+            .toAbsolutePath()
+            .normalize();
+        this.retentionCount = db.fetchSetting(RETENTION_COUNT_SETTING)
+            .flatMap(BackupArchiveService::parseRetention)
+            .orElse(Math.max(1, properties.getRetentionCount()));
     }
 
     @PostConstruct
@@ -91,26 +105,70 @@ public class BackupArchiveService {
     }
 
     public Path rootDirectory() {
-        return Path.of(properties.getBackupRoot()).toAbsolutePath().normalize();
+        return root;
+    }
+
+    public int retentionCount() {
+        return retentionCount;
+    }
+
+    public synchronized void updateSettings(String location, Integer retention) {
+        if (location == null && retention == null) {
+            throw new IllegalArgumentException("Nothing to update, provide backupLocation and/or retentionCount");
+        }
+        if (retention != null && retention < 1) {
+            throw new IllegalArgumentException("Retention count must be at least 1");
+        }
+        if (location != null) {
+            updateRootDirectory(location);
+        }
+        if (retention != null) {
+            db.saveSetting(RETENTION_COUNT_SETTING, retention.toString());
+            retentionCount = retention;
+            LOGGER.info("Retention count changed to {}, applied on the next backup run", retention);
+        }
+    }
+
+    public Path updateRootDirectory(String location) {
+        if (location == null || location.isBlank()) {
+            throw new IllegalArgumentException("Backup location is required");
+        }
+        Path requested = Path.of(location.strip());
+        if (!requested.isAbsolute()) {
+            throw new IllegalArgumentException("Backup location must be an absolute path");
+        }
+        Path normalized = requested.normalize();
+        try {
+            Files.createDirectories(normalized);
+        } catch (IOException | SecurityException e) {
+            throw new IllegalArgumentException("Unable to create backup location " + normalized);
+        }
+        if (!Files.isWritable(normalized)) {
+            throw new IllegalArgumentException("Backup location is not writable: " + normalized);
+        }
+
+        db.saveSetting(BACKUP_ROOT_SETTING, normalized.toString());
+        root = normalized;
+        invalidateCache();
+        LOGGER.info("Backup location changed to {}", normalized);
+        return normalized;
     }
 
     public BackupArchive createArchive(Path runDirectory) {
         Instant createdAt = Instant.now();
-        String fileName = FILE_DATE_FORMAT.format(createdAt) + "-media-backup.zip";
+        String fileName = FILE_DATE_FORMAT.format(createdAt) + ARCHIVE_SUFFIX;
         Path root = rootDirectory();
         Path archivePath = root.resolve(fileName);
 
         LOGGER.info("Creating backup archive: {} from runDir={}", fileName, runDirectory);
         try {
             Files.createDirectories(root);
-            zipDirectory(runDirectory, archivePath);
+            mergeParts(runDirectory, archivePath);
             enforceRetention();
             long size = Files.size(archivePath);
             LOGGER.info("Archive created: {} ({} bytes)", fileName, size);
 
-            // Invalidate cache after new archive created
-            cacheLastUpdatedMs.set(0);
-            cachedArchives.set(null);
+            invalidateCache();
 
             return new BackupArchive(toId(fileName), fileName, archivePath, size, createdAt);
         } catch (IOException e) {
@@ -132,20 +190,11 @@ public class BackupArchiveService {
         }
 
         // Cache miss -> rebuild list
-        Path root = rootDirectory();
         List<BackupArchive> archives;
-        if (!Files.exists(root)) {
-            archives = List.of();
-        } else {
-            try (var stream = Files.list(root)) {
-                archives = stream
-                    .filter(path -> path.getFileName().toString().endsWith(".zip"))
-                    .sorted(Comparator.comparing(this::lastModified).reversed())
-                    .map(this::toArchive)
-                    .toList();
-            } catch (IOException e) {
-                throw new IllegalStateException("Failed to list archives", e);
-            }
+        try {
+            archives = scanArchives();
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to list archives", e);
         }
 
         cachedArchives.set(archives);
@@ -170,10 +219,9 @@ public class BackupArchiveService {
 
         try {
             Files.deleteIfExists(archive.get().path());
+            db.deleteBackupRecordById(id);
             LOGGER.info("Archive deleted: {}", id);
-            cacheLastUpdatedMs.set(0);
-
-            cachedArchives.set(null);
+            invalidateCache();
             return true;
 
         } catch (IOException e) {
@@ -211,42 +259,73 @@ public class BackupArchiveService {
     }
 
     private void enforceRetention() throws IOException {
-        int retain = Math.max(1, properties.getRetentionCount());
-        List<Path> archives;
-        try (var stream = Files.list(rootDirectory())) {
-            archives = stream
-                .filter(path -> path.getFileName().toString().endsWith(".zip"))
-                .sorted(Comparator.comparing(this::lastModified).reversed())
+        List<BackupArchive> archives = scanArchives();
+        for (BackupArchive archive : archives.subList(Math.min(retentionCount, archives.size()), archives.size())) {
+            LOGGER.info("Retention: deleting old archive: {}", archive.fileName());
+            Files.deleteIfExists(archive.path());
+            db.deleteBackupRecordById(archive.id());
+        }
+    }
+
+    private List<BackupArchive> scanArchives() throws IOException {
+        Path root = rootDirectory();
+        if (!Files.exists(root)) {
+            return List.of();
+        }
+        try (var stream = Files.list(root)) {
+            return stream
+                .filter(path -> path.getFileName().toString().endsWith(ARCHIVE_SUFFIX))
+                .map(this::toArchive)
+                .sorted(Comparator.comparing(BackupArchive::createdAt).reversed())
                 .toList();
         }
-        for (int i = retain; i < archives.size(); i++) {
-            Path toDelete = archives.get(i);
-            LOGGER.info("Retention: deleting old archive: {}", toDelete.getFileName());
-            Files.deleteIfExists(toDelete);
-        }
     }
 
-    private void zipDirectory(Path sourceDir, Path zipPath) throws IOException {
-        Path tempZip = zipPath.resolveSibling(zipPath.getFileName() + ".tmp");
-        try (OutputStream fileOut = Files.newOutputStream(tempZip, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-             ZipOutputStream zipOut = new ZipOutputStream(fileOut);
-             var paths = Files.walk(sourceDir)) {
+    private void invalidateCache() {
+        cacheLastUpdatedMs.set(0);
+        cachedArchives.set(null);
+    }
 
-            paths.filter(Files::isRegularFile).forEach(path -> {
-                Path relative = sourceDir.relativize(path);
-                try {
-                    zipOut.putNextEntry(new ZipEntry(relative.toString()));
-                    try (InputStream in = Files.newInputStream(path)) {
-                        in.transferTo(zipOut);
-                    }
-                    zipOut.closeEntry();
-                } catch (IOException e) {
-                    throw new IllegalStateException("Failed to zip file " + path, e);
+    private void mergeParts(Path runDirectory, Path zipPath) throws IOException {
+        List<Path> parts;
+        try (var walk = Files.walk(runDirectory)) {
+            parts = walk
+                .filter(Files::isRegularFile)
+                .filter(path -> path.getFileName().toString().endsWith(".zip"))
+                .sorted()
+                .toList();
+        }
+
+        Path tempZip = zipPath.resolveSibling(zipPath.getFileName() + ".tmp");
+        List<ZipFile> openParts = new ArrayList<>();
+        SortedMap<String, ZipEntrySource> entries = new TreeMap<>();
+        try {
+            for (Path part : parts) {
+                ZipFile zip = ZipFile.builder().setPath(part).get();
+                openParts.add(zip);
+                for (ZipArchiveEntry entry : Collections.list(zip.getEntriesInPhysicalOrder())) {
+                    entries.putIfAbsent(entry.getName(), new ZipEntrySource(zip, entry));
                 }
-            });
+            }
+            // Sorted names put every directory before its contents, so unzip applies directory modes and times
+            try (var out = new ZipArchiveOutputStream(tempZip)) {
+                for (ZipEntrySource source : entries.values()) {
+                    out.addRawArchiveEntry(source.entry(), source.zip().getRawInputStream(source.entry()));
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            Files.deleteIfExists(tempZip);
+            throw e;
+        } finally {
+            for (ZipFile zip : openParts) {
+                zip.close();
+            }
         }
         Files.move(tempZip, zipPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        LOGGER.info("Merged {} part(s) into {} entries", parts.size(), entries.size());
     }
+
+    private record ZipEntrySource(ZipFile zip, ZipArchiveEntry entry) {}
 
     private BackupArchive toArchive(Path path) {
         String fileName = path.getFileName().toString();
@@ -257,6 +336,15 @@ public class BackupArchiveService {
             fileSize(path),
             lastModified(path)
         );
+    }
+
+    private static Optional<Integer> parseRetention(String stored) {
+        try {
+            return Optional.of(Integer.parseInt(stored)).filter(count -> count >= 1);
+        } catch (NumberFormatException e) {
+            LOGGER.warn("Ignoring invalid stored retention count: {}", stored);
+            return Optional.empty();
+        }
     }
 
     private String toId(String fileName) {

@@ -1,11 +1,14 @@
 package wellatleastitried.mediagarrdServer.model;
 
 import java.io.IOException;
-import java.math.BigInteger;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.DigestInputStream;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.HexFormat;
 
 public record BackupArchive(
     String id,
@@ -15,25 +18,11 @@ public record BackupArchive(
     Instant createdAt
 ) {
     public String generateChecksum() {
-        try {
-            byte[] data = Files.readAllBytes(path);
-            byte[] hash = MessageDigest.getInstance("SHA-256").digest(data);
-            String checksum = new BigInteger(1, hash).toString(16);
-            return checksum;
-        } catch (Exception e) {}
-        return "";
-    }
-
-    public int fileSize() {
-        long size;
-        try { size = Files.size(path); }
-        catch (IOException iE) { size = 0; }
-
-        if (size > Integer.MAX_VALUE) {
-            return Integer.MAX_VALUE;
+        try (DigestInputStream in = new DigestInputStream(Files.newInputStream(path), MessageDigest.getInstance("SHA-256"))) {
+            in.transferTo(OutputStream.nullOutputStream());
+            return HexFormat.of().formatHex(in.getMessageDigest().digest());
+        } catch (IOException | NoSuchAlgorithmException e) {
+            return "";
         }
-
-        return (int) size;
-
     }
 }

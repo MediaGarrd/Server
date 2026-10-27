@@ -18,11 +18,11 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
 import wellatleastitried.mediagarrdServer.model.BackupArchive;
 import wellatleastitried.mediagarrdServer.model.BackupRunResult;
 import wellatleastitried.mediagarrdServer.service.BackupArchiveService;
 import wellatleastitried.mediagarrdServer.service.BackupOrchestratorService;
+import wellatleastitried.mediagarrdServer.service.SetupService;
 
 @WebMvcTest(BackupController.class)
 class BackupControllerTest {
@@ -36,17 +36,27 @@ class BackupControllerTest {
     BackupOrchestratorService orchestratorService;
 
     @MockBean
-    MediaGarrdProperties properties;
+    SetupService setup;
 
     @Test
     void healthReturnsServerStatus() throws Exception {
         when(orchestratorService.isRunning()).thenReturn(false);
         when(orchestratorService.getInterval()).thenReturn(Duration.ofHours(12));
-        when(properties.getRetentionCount()).thenReturn(10);
+        when(archiveService.retentionCount()).thenReturn(7);
 
         mockMvc.perform(get("/api/v1/health"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.healthy").value(true));
+            .andExpect(jsonPath("$.healthy").value(true))
+            .andExpect(jsonPath("$.backupRetentionCount").value(7));
+    }
+
+    @Test
+    void clientEndpointsNeverRequireSetupSession() throws Exception {
+        when(archiveService.listArchives()).thenReturn(List.of());
+        when(orchestratorService.getInterval()).thenReturn(Duration.ofHours(12));
+
+        mockMvc.perform(get("/api/v1/health")).andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/backups")).andExpect(status().isOk());
     }
 
     @Test
@@ -78,5 +88,23 @@ class BackupControllerTest {
         mockMvc.perform(get("/api/v1/backups"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$", hasSize(1)));
+    }
+
+    @Test
+    void rejectedRunReturnsConflictWithReason() throws Exception {
+        when(orchestratorService.runBackup()).thenThrow(new BackupOrchestratorService.RunRejectedException("A backup run is already in progress"));
+
+        mockMvc.perform(post("/api/v1/backups/run"))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.error").value("A backup run is already in progress"));
+    }
+
+    @Test
+    void failedRunReturnsServerErrorWithReason() throws Exception {
+        when(orchestratorService.runBackup()).thenThrow(new IllegalStateException("Every service failed, no archive created: radarr: boom"));
+
+        mockMvc.perform(post("/api/v1/backups/run"))
+            .andExpect(status().isInternalServerError())
+            .andExpect(jsonPath("$.error").value("Every service failed, no archive created: radarr: boom"));
     }
 }

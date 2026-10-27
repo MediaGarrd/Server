@@ -2,7 +2,6 @@
 .gradle
 .settings/
 build
-gradle/
 **/.settings/
 **/.project
 **/.classpath
@@ -13,6 +12,8 @@ gradle/
 .env.*
 .env.example
 .env.test.example
+vendor/**/*.jar
+.factorypath
 
 # Prod artifacts
 secrets/
@@ -20,3 +21,5 @@ dockerenv/
 .env
 data/
 docker-compose.yml
+ref/structurizr/*.json
+ref/structurizr/.structurizr/

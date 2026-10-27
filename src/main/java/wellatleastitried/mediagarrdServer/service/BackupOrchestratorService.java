@@ -1,67 +1,88 @@
 package wellatleastitried.mediagarrdServer.service;
 
+import static wellatleastitried.mediagarrdServer.utilities.MediaGarrdUtils.formatTime;
+import static wellatleastitried.mediagarrdServer.utilities.MediaGarrdUtils.recordCurrentTime;
+import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseUtils.Status.COMPLETED;
+import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseUtils.Status.FAILED;
+import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseUtils.Status.PARTIAL;
+
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.concurrent.ExecutionException;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PreDestroy;
-import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
 import wellatleastitried.mediagarrdServer.model.BackupArchive;
 import wellatleastitried.mediagarrdServer.model.BackupRunResult;
 import wellatleastitried.mediagarrdServer.model.BackupServiceResult;
-import wellatleastitried.mediagarrdServer.services.runner.Runner;
-
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import static wellatleastitried.mediagarrdServer.utilities.DatabaseUtils.Status.*;
-import static wellatleastitried.mediagarrdServer.utilities.MediaGarrdUtils.*;
+import wellatleastitried.mediagarrdServer.model.ServiceDefinition;
 
 @Service
 public class BackupOrchestratorService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(BackupOrchestratorService.class);
 
-    private final MediaGarrdProperties properties;
-    private final RunnerFactory runnerFactory;
+    private static final int RUNNER_POOL_SIZE = 6;
+    private static final long RUNNER_IDLE_TTL_SECONDS = 30;
+    private static final long SCHEDULED_CHECK_INTERVAL_MS = 30000;
+    private static final AtomicInteger THREAD_COUNTER = new AtomicInteger();
+
+    private final ServiceBackupRunner runner;
     private final BackupArchiveService archiveService;
     private final BackupScheduleService scheduleService;
     private final DatabaseService db;
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private final ExecutorService runnerExecutor = new ThreadPoolExecutor(
-        1, // core threads
-        6, // max threads
-        30, // ttl
-        TimeUnit.SECONDS,
-        new LinkedBlockingQueue<>()
-    );
+    private final ReentrantReadWriteLock configLock = new ReentrantReadWriteLock();
+    private final ExecutorService runnerExecutor = createRunnerExecutor();
 
     public BackupOrchestratorService(
-        MediaGarrdProperties properties,
-        RunnerFactory runnerFactory,
+        ServiceBackupRunner runner,
         BackupArchiveService archiveService,
         BackupScheduleService scheduleService,
         DatabaseService db
     ) {
-        this.properties = properties;
-        this.runnerFactory = runnerFactory;
+        this.runner = runner;
         this.archiveService = archiveService;
         this.scheduleService = scheduleService;
         this.db = db;
     }
 
-    @Scheduled(fixedDelay = 30000)
+    private static ExecutorService createRunnerExecutor() {
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+            RUNNER_POOL_SIZE,
+            RUNNER_POOL_SIZE,
+            RUNNER_IDLE_TTL_SECONDS,
+            TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(),
+            runnable -> {
+                Thread thread = new Thread(runnable, "backup-runner-" + THREAD_COUNTER.incrementAndGet());
+                thread.setDaemon(true);
+                return thread;
+            }
+        );
+        executor.allowCoreThreadTimeOut(true);
+        return executor;
+    }
+
+    @Scheduled(fixedDelay = SCHEDULED_CHECK_INTERVAL_MS)
     public void scheduledRun() {
         if (running.get()) {
             LOGGER.debug("Scheduled check skipped, backup already in progress");
@@ -81,89 +102,109 @@ public class BackupOrchestratorService {
     public BackupRunResult runBackup() {
         if (!running.compareAndSet(false, true)) {
             LOGGER.warn("runBackup() called while backup already in progress, rejecting");
-            throw new IllegalStateException("A backup run is already in progress");
+            throw new RunRejectedException("A backup run is already in progress");
         }
 
-        scheduleService.markRunStarted();
-
-        Path runDirectory = archiveService.createRunDirectory();
-        Instant startedAt = Instant.now();
-        List<Runner> runners = runnerFactory.build(properties.getServiceConfigs());
-        List<BackupServiceResult> serviceRunResults = new ArrayList<>();
-
-        LOGGER.info(
-            "Backup run started: runDir={}, services={}",
-            runDirectory,
-            runners.stream().map(Runner::getServiceName).toList());
-
+        configLock.readLock().lock();
+        Path runDirectory = null;
         try {
-            String errorMessage = "";
-            List<Future<BackupServiceResult>> futures = new ArrayList<>();
-            for (Runner runner : runners) {
-                LOGGER.info("Submitting runner for service: {}", runner.getServiceName());
-                futures.add(runnerExecutor.submit(() -> runSingleRunner(runner, runDirectory)));
+            List<ServiceDefinition> services = db.fetchServices();
+            if (services.isEmpty()) {
+                LOGGER.warn("No services are configured, aborting backup run before creating a run directory");
+                throw new RunRejectedException("No services are configured for backup");
             }
 
-            for (Future<BackupServiceResult> future : futures) {
-                try {
-                    BackupServiceResult outcome = future.get();
-                    serviceRunResults.add(outcome);
-                    if (COMPLETED.equals(outcome.status())) {
-                        LOGGER.info("Runner succeeded: {}", outcome.serviceName());
-                    } else {
-                        LOGGER.warn("Runner failed (non-fatal): {}", outcome.serviceName());
-                    }
-                } catch (InterruptedException ex) {
-                    Thread.currentThread().interrupt();
-                    throw new IllegalStateException("Backup run interrupted", ex);
-                } catch (ExecutionException ex) {
-                    errorMessage.concat(ex.getMessage() + "\n");
-                    LOGGER.warn("Unexpected failure while waiting for runner task", ex.getCause());
-                }
+            scheduleService.markRunStarted();
+            runDirectory = archiveService.createRunDirectory();
+            final Path runDir = runDirectory;
+            Instant startedAt = Instant.now();
+
+            LOGGER.info("Backup run started: runDir={}, services={}",
+                runDir, services.stream().map(ServiceDefinition::name).toList());
+
+            List<CompletableFuture<BackupServiceResult>> futures = services.stream()
+                .map(service -> CompletableFuture
+                    .supplyAsync(() -> runner.run(service, runDir), runnerExecutor)
+                    .exceptionally(t -> {
+                        Throwable cause = unwrap(t);
+                        LOGGER.warn("Runner {} failed unexpectedly", service.name(), cause);
+                        return failedResult(service.name(), cause);
+                    }))
+                .toList();
+
+            List<BackupServiceResult> serviceRunResults = futures.stream()
+                .map(CompletableFuture::join)
+                .toList();
+
+            List<BackupServiceResult> incomplete = serviceRunResults.stream()
+                .filter(r -> !COMPLETED.equals(r.status()))
+                .toList();
+            int succeeded = services.size() - incomplete.size();
+            LOGGER.info("All runners finished: succeeded={}/{}", succeeded, services.size());
+            incomplete.forEach(r -> LOGGER.warn("Runner did not complete (non-fatal): {} ({})", r.serviceName(), r.status()));
+
+            String errorMessage = incomplete.stream()
+                .map(r -> r.serviceName() + ": " + Objects.requireNonNullElse(r.errorMessage(), "no details"))
+                .collect(Collectors.joining("\n"));
+
+            if (succeeded == 0 && incomplete.stream().allMatch(r -> FAILED.equals(r.status()))) {
+                String runId = "failed-" + UUID.randomUUID();
+                serviceRunResults.forEach(r -> r.setId(runId));
+                db.addNewBackupRecord(new BackupRunResult(
+                    runId, formatTime(startedAt), recordCurrentTime(), FAILED, serviceRunResults, null, errorMessage));
+                LOGGER.error("Every service failed, no archive created (run {}):\n{}", runId, errorMessage);
+                throw new IllegalStateException("Every service failed, no archive created: " + errorMessage);
             }
 
-            int successfulRunnerCount = (int) serviceRunResults.stream().filter(r -> COMPLETED.equals(r.status())).count();
-            LOGGER.info(
-                "All runners finished: succeeded={}/{}",
-                successfulRunnerCount,
-                runners.size()
-            );
             BackupArchive archive = archiveService.createArchive(runDirectory);
-            for (BackupServiceResult serviceResult : serviceRunResults) {
-                serviceResult.setId(archive.id());
-            }
-            long durationMs = Instant.now().toEpochMilli() - startedAt.toEpochMilli();
-            LOGGER.info(
-                "Backup run complete: archive={}, size={}B, duration={}ms, services={}",
-                archive.fileName(),
-                archive.sizeBytes(),
-                durationMs,
-                serviceRunResults.stream().map(BackupServiceResult::serviceName).toList()
-            );
+            serviceRunResults.forEach(r -> r.setId(archive.id()));
 
-            String status;
-            if (successfulRunnerCount == runners.size()) {
-                status = COMPLETED;
-            } else if (successfulRunnerCount > 0) {
-                status = PARTIAL;
-            } else {
-                status = FAILED;
-            }
+            long durationMs = Duration.between(startedAt, Instant.now()).toMillis();
+            LOGGER.info("Backup run complete: archive={}, size={}B, duration={}ms, services={}",
+                archive.fileName(), archive.sizeBytes(), durationMs,
+                serviceRunResults.stream().map(BackupServiceResult::serviceName).toList());
+
+            String status = succeeded == services.size() ? COMPLETED : succeeded > 0 ? PARTIAL : FAILED;
+
             BackupRunResult backupRecord = new BackupRunResult(
-                archive.id(),
-                status,
-                formatTime(startedAt),
-                recordCurrentTime(),
-                serviceRunResults,
-                archive,
-                errorMessage
-            );
+                archive.id(), formatTime(startedAt), recordCurrentTime(), status,
+                serviceRunResults, archive, errorMessage);
             db.addNewBackupRecord(backupRecord);
             return backupRecord;
         } finally {
-            archiveService.removeRunDirectory(runDirectory);
+            if (runDirectory != null) {
+                archiveService.removeRunDirectory(runDirectory);
+                LOGGER.debug("Run directory cleaned up: {}", runDirectory);
+            }
+            configLock.readLock().unlock();
             running.set(false);
-            LOGGER.debug("Run directory cleaned up: {}", runDirectory);
+        }
+    }
+
+    private static Throwable unwrap(Throwable t) {
+        return (t instanceof CompletionException && t.getCause() != null) ? t.getCause() : t;
+    }
+
+    private static BackupServiceResult failedResult(String serviceName, Throwable cause) {
+        String timestamp = recordCurrentTime();
+        return new BackupServiceResult(
+            null,
+            FAILED,
+            timestamp,
+            timestamp,
+            serviceName,
+            Objects.requireNonNullElse(cause.getMessage(), cause.toString())
+        );
+    }
+
+    public <T> T whileIdle(Supplier<T> configChange) {
+        if (!configLock.writeLock().tryLock()) {
+            throw new BackupInProgressException("Configuration cannot be changed while a backup is running, try again once it finishes");
+        }
+        try {
+            return configChange.get();
+        } finally {
+            configLock.writeLock().unlock();
         }
     }
 
@@ -184,24 +225,15 @@ public class BackupOrchestratorService {
         runnerExecutor.shutdownNow();
     }
 
-    private BackupServiceResult runSingleRunner(Runner runner, Path runDirectory) {
-        LOGGER.info("[{}] Runner starting", runner.getServiceName());
-        long start = System.currentTimeMillis();
-        try {
-            runner.run(runDirectory);
-            LOGGER.info("[{}] Runner finished in {}ms", runner.getServiceName(), System.currentTimeMillis() - start);
-        } catch (RuntimeException ex) {
-            LOGGER.error("[{}] Runner failed after {}ms, continuing with remaining services",
-                runner.getServiceName(), System.currentTimeMillis() - start, ex);
+    public static class RunRejectedException extends IllegalStateException {
+        public RunRejectedException(String message) {
+            super(message);
         }
+    }
 
-        return new BackupServiceResult(
-            null,
-            runner.getRunnerStatus(),
-            runner.getRunnerStartTime(),
-            runner.getRunnerEndTime(),
-            runner.getServiceName(),
-            runner.getRunnerException()
-        );
+    public static class BackupInProgressException extends IllegalStateException {
+        public BackupInProgressException(String message) {
+            super(message);
+        }
     }
 }

@@ -3,31 +3,7 @@ server:
 
 mediagarrd:
   backup-interval: ${MEDIAGARRD_BACKUP_INTERVAL:PT12H}
-  backup-root: ${MEDIAGARRD_BACKUP_ROOT:./data/server/backups}
+  backup-root: ${MEDIAGARRD_BACKUP_ROOT:/var/lib/mediagarrd/backups}
   retention-count: ${MEDIAGARRD_RETENTION_COUNT:10}
-  services:
-    jellyfin:
-      enabled: ${JELLYFIN_ENABLED:false}
-      path: ${JELLYFIN_PATH:/srv/sources/jellyfin}
-      config-path: ${JELLYFIN_CONFIG_PATH:/srv/sources/jellyfin/config}
-    radarr:
-      enabled: ${RADARR_ENABLED:false}
-      path: ${RADARR_PATH:/srv/sources/radarr}
-      config-path: ${RADARR_CONFIG_PATH:/srv/sources/radarr/config}
-    sonarr:
-      enabled: ${SONARR_ENABLED:false}
-      path: ${SONARR_PATH:/srv/sources/sonarr}
-      config-path: ${SONARR_CONFIG_PATH:/srv/sources/sonarr/config}
-    prowlarr:
-      enabled: ${PROWLARR_ENABLED:false}
-      path: ${PROWLARR_PATH:/srv/sources/prowlarr}
-      config-path: ${PROWLARR_CONFIG_PATH:/srv/sources/prowlarr/config}
-    tdarr:
-      enabled: ${TDARR_ENABLED:false}
-      path: ${TDARR_PATH:/srv/sources/tdarr}
-      config-path: ${TDARR_CONFIG_PATH:/srv/sources/tdarr/configs}
-    qbittorrent:
-      enabled: ${QBITTORRENT_ENABLED:false}
-      path: ${QBITTORRENT_PATH:/srv/sources/qbittorrent}
-      config-path: ${QBITTORRENT_CONFIG_PATH:/srv/sources/qbittorrent/config}
-      saved-torrents-path: ${QBITTORRENT_SAVED_TORRENTS_PATH}
+  database-path: ${MEDIAGARRD_DATABASE_PATH:/var/lib/mediagarrd/db/mediagarrd.db}
+  helper-image: ${MEDIAGARRD_HELPER_IMAGE:busybox:stable}

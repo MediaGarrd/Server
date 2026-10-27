@@ -7,5 +7,4 @@ public record BackupDto(
     String fileName,
     long sizeBytes,
     Instant createdAt
-) {
-}
+) {}

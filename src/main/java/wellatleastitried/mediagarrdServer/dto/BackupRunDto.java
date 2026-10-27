@@ -8,5 +8,4 @@ public record BackupRunDto(
     String endTime,
     List<String> servicesRan,
     BackupDto archive
-) {
-}
+) {}

@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 11-05-26
+- Every backup archive now includes a consistent snapshot of the server's own database (settings, services, and backup records), stored at its absolute host path so the future recovery tool and `bsdtar -xpf <archive> -C /` restore it in place
+- The host path is found by inspecting the server's own container, a run is reported as partial with the error logged if it cannot be found or the snapshot fails, and a corrupt or missing database is never replaced by an empty one
+- All database operations now wait while the snapshot is taken, so nothing is written to the database mid-copy
+- The database snapshot appears as `_mediagarrd-server` in each run's service results and in the API's service names
+- A service copy of the database file or its `-journal`, `-wal`, and `-shm` files no longer replaces or sits next to the snapshot in the archive
+- Documented how to restore the database from an archive
+
 ## 10-26-26
 - Fixed logic issue with migration versioning
 - Added Structurizr diagrams to visualize workflow

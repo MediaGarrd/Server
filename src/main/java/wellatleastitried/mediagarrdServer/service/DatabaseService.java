@@ -32,12 +32,15 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.sqlite.SQLiteErrorCode;
+import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteException;
+import org.sqlite.SQLiteOpenMode;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -65,6 +68,9 @@ public class DatabaseService {
 
     private static final List<String> DATABASE_FILE_SUFFIXES = List.of("", "-journal", "-wal", "-shm");
 
+    private static final List<String> REQUIRED_TABLES = List.of("backups", "backup_services", "services", "settings");
+
+    private final ReentrantReadWriteLock databaseLock = new ReentrantReadWriteLock();
     private final Path databaseFile;
     private final String databaseUrl;
     private volatile SchemaFingerprint verifiedSchema;
@@ -284,6 +290,7 @@ public class DatabaseService {
     }
 
     public void addNewBackupRecord(BackupRunResult backupRecord) {
+        databaseLock.readLock().lock();
         try (var connection = openVerifiedConnection()) {
             connection.setAutoCommit(false);
             Integer backupId = addMasterBackup(connection, backupRecord);
@@ -294,6 +301,8 @@ public class DatabaseService {
             LOGGER.warn("Could not log record of backup: " + backupRecord.runId(), sE);
         } catch (Exception e) {
             LOGGER.warn("An unknown error occurred while attempting to open a connection to the database", e);
+        } finally {
+            databaseLock.readLock().unlock();
         }
     }
 
@@ -364,6 +373,7 @@ public class DatabaseService {
 
     public Optional<FetchedBackupRecord> fetchBackupById(String archiveId) {
         FetchedBackupRecord backupRecord = null;
+        databaseLock.readLock().lock();
         try (var connection = openVerifiedConnection()) {
             backupRecord = fetchMasterRecordById(connection, archiveId);
             if (backupRecord != null) {
@@ -373,6 +383,8 @@ public class DatabaseService {
             LOGGER.warn("An error occurred while fetching a backup record by archive_id (" + archiveId + ")", sE);
         } catch (Exception e) {
             LOGGER.warn("An unknown error occurred while fetching a backup record by archive_id (" + archiveId + ")", e);
+        } finally {
+            databaseLock.readLock().unlock();
         }
 
         return Optional.ofNullable(backupRecord);
@@ -392,6 +404,7 @@ public class DatabaseService {
 
     public Optional<FetchedBackupRecord> fetchLatestBackupRecord() {
         FetchedBackupRecord backupRecord = null;
+        databaseLock.readLock().lock();
         try (var connection = openVerifiedConnection()) {
             backupRecord = fetchLatestMasterRecord(connection);
             if (backupRecord != null) {
@@ -401,6 +414,8 @@ public class DatabaseService {
             LOGGER.warn("An error occurred while fetching the latest backup record", sE);
         } catch (Exception e) {
             LOGGER.warn("An unknown error occurred while fetching the latest backup record", e);
+        } finally {
+            databaseLock.readLock().unlock();
         }
 
         return Optional.ofNullable(backupRecord);
@@ -454,6 +469,7 @@ public class DatabaseService {
     }
 
     public void deleteBackupRecordById(String archiveId) {
+        databaseLock.readLock().lock();
         try (var connection = openVerifiedConnection();
             var statement = connection.prepareStatement(DELETE_BACKUP_RECORD_BY_ID)) {
             statement.setString(1, archiveId);
@@ -461,6 +477,8 @@ public class DatabaseService {
         } catch (SQLException sE) {
             invalidateIfDamaged(sE);
             LOGGER.warn("Error deleting a backup record with archive_id (" + archiveId + ")", sE);
+        } finally {
+            databaseLock.readLock().unlock();
         }
     }
 
@@ -520,15 +538,78 @@ public class DatabaseService {
     }
 
     private <T> T execute(String action, String sql, String[] params, StatementWork<T> work) {
-        for (int attempt = 1; ; attempt++) {
-            try (var connection = openVerifiedConnection(); var statement = connection.prepareStatement(sql)) {
-                bind(statement, params);
-                return work.run(statement);
-            } catch (SQLException sE) {
-                if (attempt > 1 || !invalidateIfDamaged(sE)) {
-                    throw new IllegalStateException("Failed to " + action, sE);
+        databaseLock.readLock().lock();
+        try {
+            for (int attempt = 1; ; attempt++) {
+                try (var connection = openVerifiedConnection(); var statement = connection.prepareStatement(sql)) {
+                    bind(statement, params);
+                    return work.run(statement);
+                } catch (SQLException sE) {
+                    if (attempt > 1 || !invalidateIfDamaged(sE)) {
+                        throw new IllegalStateException("Failed to " + action, sE);
+                    }
+                    LOGGER.warn("Database is damaged or out of date, rebuilding and retrying: {}", sE.getMessage());
                 }
-                LOGGER.warn("Database is damaged or out of date, rebuilding and retrying: {}", sE.getMessage());
+            }
+        } finally {
+            databaseLock.readLock().unlock();
+        }
+    }
+
+    public Path databaseFile() {
+        return databaseFile;
+    }
+
+    public void snapshotTo(Path target) throws SQLException, IOException {
+        databaseLock.writeLock().lock();
+        try {
+            if (Files.exists(target)) {
+                throw new IOException("Snapshot target " + target + " already exists");
+            }
+            try {
+                if (!Files.isRegularFile(databaseFile)) {
+                    throw new IOException("Database file " + databaseFile + " does not exist");
+                }
+                try (var connection = openSnapshotConnection(databaseFile)) {
+                    checkNotCorrupt(connection);
+                    try (var statement = connection.createStatement()) {
+                        statement.execute("VACUUM INTO '" + target.toString().replace("'", "''") + "'");
+                    }
+                }
+                verifySnapshot(target);
+            } catch (SQLException | IOException | RuntimeException e) {
+                Files.deleteIfExists(target);
+                throw e;
+            }
+        } finally {
+            databaseLock.writeLock().unlock();
+        }
+    }
+
+    protected Connection openSnapshotConnection(Path file) throws SQLException {
+        SQLiteConfig config = new SQLiteConfig();
+        config.resetOpenMode(SQLiteOpenMode.CREATE);
+        return config.createConnection(SQLITE + file);
+    }
+
+    private void verifySnapshot(Path snapshot) throws SQLException, IOException {
+        if (!Files.isRegularFile(snapshot)) {
+            throw new IOException("Snapshot was not written to " + snapshot);
+        }
+        try (var connection = openSnapshotConnection(snapshot)) {
+            checkNotCorrupt(connection);
+            if (getDatabaseVersion(connection) < 1) {
+                throw new SQLException("Snapshot is missing its schema version");
+            }
+            List<String> tables = new ArrayList<>();
+            try (var statement = connection.createStatement();
+                var rs = statement.executeQuery("SELECT name FROM sqlite_master WHERE type = 'table'")) {
+                while (rs.next()) {
+                    tables.add(rs.getString(1));
+                }
+            }
+            if (!tables.containsAll(REQUIRED_TABLES)) {
+                throw new SQLException("Snapshot is missing tables, found " + tables);
             }
         }
     }

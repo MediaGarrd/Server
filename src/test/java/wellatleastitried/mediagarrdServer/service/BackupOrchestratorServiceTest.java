@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -36,6 +37,7 @@ class BackupOrchestratorServiceTest {
 
     private static final ServiceDefinition RADARR = new ServiceDefinition("radarr", List.of("/srv/radarr"));
     private static final ServiceDefinition SONARR = new ServiceDefinition("sonarr", List.of("/srv/sonarr"));
+    private static final String SNAPSHOT = DatabaseSnapshotService.SERVICE_NAME;
     private static final Path RUN_DIR = Path.of("/tmp/run");
     private static final BackupArchive ARCHIVE = new BackupArchive("archive-1", "archive-1.zip", Path.of("archive-1.zip"), 1, Instant.EPOCH);
 
@@ -43,12 +45,14 @@ class BackupOrchestratorServiceTest {
     private final BackupArchiveService archives = mock(BackupArchiveService.class);
     private final BackupScheduleService schedule = mock(BackupScheduleService.class);
     private final DatabaseService db = mock(DatabaseService.class);
-    private final BackupOrchestratorService orchestrator = new BackupOrchestratorService(runner, archives, schedule, db);
+    private final DatabaseSnapshotService snapshots = mock(DatabaseSnapshotService.class);
+    private final BackupOrchestratorService orchestrator = new BackupOrchestratorService(runner, archives, schedule, snapshots, db);
 
     @BeforeEach
     void setUp() {
         when(archives.createRunDirectory()).thenReturn(RUN_DIR);
         when(archives.createArchive(RUN_DIR)).thenReturn(ARCHIVE);
+        when(snapshots.snapshot(RUN_DIR)).thenReturn(snapshotResult(COMPLETED));
     }
 
     @AfterEach
@@ -74,7 +78,7 @@ class BackupOrchestratorServiceTest {
 
         assertEquals(COMPLETED, result.status());
         assertEquals("", result.errorMessage());
-        assertEquals(List.of("radarr", "sonarr"), result.serviceNames());
+        assertEquals(List.of("radarr", "sonarr", SNAPSHOT), result.serviceNames());
         result.serviceResults().forEach(r -> assertEquals("archive-1", r.runId()));
         verify(schedule).markRunStarted();
         verify(db).addNewBackupRecord(result);
@@ -92,6 +96,55 @@ class BackupOrchestratorServiceTest {
     }
 
     @Test
+    void partialWhenOnlyTheDatabaseSnapshotFails() {
+        givenResults(COMPLETED, COMPLETED);
+        when(snapshots.snapshot(RUN_DIR)).thenReturn(snapshotResult(FAILED));
+
+        BackupRunResult result = orchestrator.runBackup();
+
+        assertEquals(PARTIAL, result.status());
+        assertEquals(SNAPSHOT + ": boom", result.errorMessage());
+        assertEquals(ARCHIVE, result.archive());
+        result.serviceResults().forEach(r -> assertEquals("archive-1", r.runId()));
+        verify(db).addNewBackupRecord(result);
+    }
+
+    @Test
+    void snapshotFailureIsAddedToTheServiceErrors() {
+        givenResults(COMPLETED, FAILED);
+        when(snapshots.snapshot(RUN_DIR)).thenReturn(snapshotResult(FAILED));
+
+        BackupRunResult result = orchestrator.runBackup();
+
+        assertEquals(PARTIAL, result.status());
+        assertEquals("sonarr: boom\n" + SNAPSHOT + ": boom", result.errorMessage());
+    }
+
+    @Test
+    void aThrowingSnapshotStillProducesAPartialArchive() {
+        givenResults(COMPLETED, COMPLETED);
+        when(snapshots.snapshot(RUN_DIR)).thenThrow(new IllegalStateException("docker down"));
+
+        BackupRunResult result = orchestrator.runBackup();
+
+        assertEquals(PARTIAL, result.status());
+        assertEquals(SNAPSHOT + ": docker down", result.errorMessage());
+        assertEquals(ARCHIVE, result.archive());
+        verify(db).addNewBackupRecord(result);
+    }
+
+    @Test
+    void snapshotRunsBeforeTheArchiveIsCreated() {
+        givenResults(COMPLETED, COMPLETED);
+
+        orchestrator.runBackup();
+
+        var order = inOrder(snapshots, archives);
+        order.verify(snapshots).snapshot(RUN_DIR);
+        order.verify(archives).createArchive(RUN_DIR);
+    }
+
+    @Test
     void failedWhenNoServiceCompletes() {
         givenResults(PARTIAL, FAILED);
 
@@ -106,6 +159,7 @@ class BackupOrchestratorServiceTest {
 
         assertTrue(e.getMessage().contains("radarr: boom\nsonarr: boom"));
         verify(archives, never()).createArchive(any());
+        verify(snapshots, never()).snapshot(any());
         verify(archives).removeRunDirectory(RUN_DIR);
         assertFalse(orchestrator.isRunning());
 
@@ -221,6 +275,10 @@ class BackupOrchestratorServiceTest {
         when(db.fetchServices()).thenReturn(List.of(RADARR, SONARR));
         when(runner.run(RADARR, RUN_DIR)).thenReturn(result("radarr", radarrStatus));
         when(runner.run(SONARR, RUN_DIR)).thenReturn(result("sonarr", sonarrStatus));
+    }
+
+    private static BackupServiceResult snapshotResult(String status) {
+        return result(SNAPSHOT, status);
     }
 
     private static BackupServiceResult result(String name, String status) {

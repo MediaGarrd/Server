@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseUtils.RETENTION_COUNT_SETTING;
 import static wellatleastitried.mediagarrdServer.service.ServiceBackupRunnerTest.contents;
 import static wellatleastitried.mediagarrdServer.service.ServiceBackupRunnerTest.dir;
@@ -14,6 +16,7 @@ import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseUtil
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.DriverManager;
 import java.util.List;
 import java.util.Map;
 
@@ -283,6 +286,51 @@ class BackupArchiveServiceTest {
 
         assertFalse(Files.exists(run));
         assertFalse(Files.exists(tempZip));
+    }
+
+    @Test
+    void theDatabaseSnapshotAlwaysWinsOverServiceCopiesOfTheSamePath() throws Exception {
+        db.saveSetting("backup_root", "/marker");
+        DatabaseHostPathResolver hostPaths = mock(DatabaseHostPathResolver.class);
+        String entry = "srv/mediagarrd/db/mediagarrd.db";
+        when(hostPaths.resolve(db.databaseFile())).thenReturn(Path.of("/" + entry));
+        Path run = service.createRunDirectory();
+        part(run, "Mediagarrd", 0, "/srv/mediagarrd/db", tar(
+            dir("db/"),
+            file("db/mediagarrd.db", "LIVE COPY"),
+            file("db/mediagarrd.db-journal", "stale journal"),
+            file("db/mediagarrd.db-wal", "wal"),
+            file("db/mediagarrd.db-shm", "shm"),
+            file("db/notes.txt", "keep")));
+        part(run, "0radarr", 0, "/srv/mediagarrd/db/mediagarrd.db", tar(file("mediagarrd.db", "LIVE COPY 2")));
+
+        var snapshot = new DatabaseSnapshotService(db, hostPaths).snapshot(run);
+        BackupArchive archive = service.createArchive(run);
+
+        assertEquals(COMPLETED, snapshot.status());
+        assertEquals(
+            List.of("srv/mediagarrd/db/", entry, "srv/mediagarrd/db/notes.txt"),
+            List.copyOf(contents(archive.path()).keySet()));
+        assertEquals("keep", contents(archive.path()).get("srv/mediagarrd/db/notes.txt"));
+        Path extracted = tempDir.resolve("extracted.db");
+        try (ZipFile zip = ZipFile.builder().setPath(archive.path()).get()) {
+            Files.copy(zip.getInputStream(zip.getEntry(entry)), extracted);
+        }
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + extracted);
+            var statement = connection.createStatement()) {
+            assertEquals("ok", statement.executeQuery("PRAGMA quick_check").getString(1));
+            assertEquals("/marker", statement.executeQuery("SELECT value FROM settings WHERE key = 'backup_root'").getString(1));
+        }
+    }
+
+    @Test
+    void archivesWithoutASnapshotPartStillMerge() throws Exception {
+        Path run = service.createRunDirectory();
+        part(run, "radarr", 0, "/srv/radarr", tar(file("radarr", "x")));
+
+        BackupArchive archive = service.createArchive(run);
+
+        assertEquals(List.of("srv/radarr"), List.copyOf(contents(archive.path()).keySet()));
     }
 
     private static void part(Path run, String service, int index, String hostPath, java.io.InputStream tar) throws Exception {

@@ -84,4 +84,4 @@ Info-ZIP `unzip -o <archive>.zip -d /` restores contents, permissions, and symbo
 > **Security:** the server needs `/var/run/docker.sock`, which gives it root-equivalent access to the host. During setup the configuration API requires the PIN session, but once setup is finished the API is unauthenticated, so do not expose the server port to untrusted networks.
 
 ## License
-[GPLv3](./LICENSE)
+[MIT](./LICENSE)

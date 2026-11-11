@@ -3,25 +3,7 @@ server:
 
 mediagarrd:
   backup-interval: ${MEDIAGARRD_BACKUP_INTERVAL:PT12H}
-  backup-root: ${MEDIAGARRD_BACKUP_ROOT:./data/server/backups}
+  backup-root: ${MEDIAGARRD_BACKUP_ROOT:/var/lib/mediagarrd/backups}
   retention-count: ${MEDIAGARRD_RETENTION_COUNT:10}
-  services:
-    jellyfin:
-      enabled: ${JELLYFIN_ENABLED:true}
-      config-path: /srv/sources/jellyfin/config
-    radarr:
-      enabled: ${RADARR_ENABLED:true}
-      path: /srv/sources/radarr
-    sonarr:
-      enabled: ${SONARR_ENABLED:true}
-      path: /srv/sources/sonarr
-    prowlarr:
-      enabled: ${PROWLARR_ENABLED:true}
-      path: /srv/sources/prowlarr
-    tdarr:
-      enabled: ${TDARR_ENABLED:true}
-      path: /srv/sources/tdarr
-    qbittorrent:
-      enabled: ${QBITTORRENT_ENABLED:true}
-      path: /srv/sources/qbittorrent
-      saved-torrents-path: ${QBITTORRENT_SAVED_TORRENTS_PATH}
+  database-path: ${MEDIAGARRD_DATABASE_PATH:/var/lib/mediagarrd/db/mediagarrd.db}
+  helper-image: ${MEDIAGARRD_HELPER_IMAGE:busybox:stable}

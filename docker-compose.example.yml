@@ -1,16 +1,17 @@
-# Auto-generated docker-compose.yml by install.sh
 services:
   mediagarrd-server:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: mediagarrd-server
-    env_file:
-      - ./secrets/server.env
+    environment:
+      - SERVER_PORT=38471
+      - MEDIAGARRD_BACKUP_INTERVAL=PT12H
+      - MEDIAGARRD_RETENTION_COUNT=10
     ports:
       - "38471:38471"
     volumes:
       - "./data/server/backups:/var/lib/mediagarrd/backups"
-      - "/srv/jellyfin:/srv/sources/jellyfin:ro"
-      - "/home/user/sonarr:/srv/sources/sonarr:ro"
+      - "./data/server/db:/var/lib/mediagarrd/db"
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped

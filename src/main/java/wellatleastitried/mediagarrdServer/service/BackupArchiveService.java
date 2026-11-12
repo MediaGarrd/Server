@@ -13,8 +13,10 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.UUID;
@@ -41,6 +43,7 @@ public class BackupArchiveService {
         .withZone(ZoneOffset.UTC);
     private static final long ARCHIVE_CACHE_TTL_MS = 60_000;  // Cache archive list for 60 seconds
     static final String ARCHIVE_SUFFIX = "-media-backup.zip";
+    private static final List<String> DATABASE_SIDECAR_SUFFIXES = List.of("", "-journal", "-wal", "-shm");
 
     private final DatabaseService db;
     private final AtomicReference<List<BackupArchive>> cachedArchives = new AtomicReference<>(null);
@@ -297,13 +300,29 @@ public class BackupArchiveService {
         }
 
         Path tempZip = zipPath.resolveSibling(zipPath.getFileName() + ".tmp");
+        Path snapshotDirectory = runDirectory.resolve(DatabaseSnapshotService.PART_DIRECTORY);
         List<ZipFile> openParts = new ArrayList<>();
         SortedMap<String, ZipEntrySource> entries = new TreeMap<>();
+        Set<String> reserved = new HashSet<>();
         try {
-            for (Path part : parts) {
+            for (Path part : parts.stream().filter(path -> path.startsWith(snapshotDirectory)).toList()) {
                 ZipFile zip = ZipFile.builder().setPath(part).get();
                 openParts.add(zip);
                 for (ZipArchiveEntry entry : Collections.list(zip.getEntriesInPhysicalOrder())) {
+                    entries.put(entry.getName(), new ZipEntrySource(zip, entry));
+                    if (!entry.isDirectory()) {
+                        DATABASE_SIDECAR_SUFFIXES.forEach(suffix -> reserved.add(entry.getName() + suffix));
+                    }
+                }
+            }
+            for (Path part : parts.stream().filter(path -> !path.startsWith(snapshotDirectory)).toList()) {
+                ZipFile zip = ZipFile.builder().setPath(part).get();
+                openParts.add(zip);
+                for (ZipArchiveEntry entry : Collections.list(zip.getEntriesInPhysicalOrder())) {
+                    if (reserved.contains(entry.getName())) {
+                        LOGGER.warn("Dropping {} from {}, the database snapshot owns that path", entry.getName(), part);
+                        continue;
+                    }
                     entries.putIfAbsent(entry.getName(), new ZipEntrySource(zip, entry));
                 }
             }

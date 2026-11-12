@@ -68,6 +68,8 @@ srv/radarr/config/config.xml
 ```
 Each entry keeps its permissions, owner (uid/gid), and modification time. Symbolic links are stored as links, empty directories are kept, and hard links are stored as regular copies. Named pipes, sockets, and device files are skipped. If two services back up the same path it appears once. If a path fails to copy, none of it is included and the run is reported as partial.
 
+Every archive also contains a consistent snapshot of the server's own database (settings, services, and backup records) at the database file's absolute host path, for example `home/you/MediaGarrd/data/server/db/mediagarrd.db` when `./data/server/db` is mounted at `/var/lib/mediagarrd/db`. The server finds that host path by inspecting its own container, and no other database operation runs while the snapshot is taken. If the path cannot be resolved or the snapshot fails, the archive is still created, the run is reported as partial, and the error is listed under `_mediagarrd-server` (which also shows up in each run's service list). The snapshot never contains the record of its own run. On Docker Desktop (macOS and Windows) the host path reported by Docker is a path inside its VM, so the snapshot's location in the archive will not match your real host path. If a service also backs up the database directory, the snapshot replaces that service's copy of the database file, and its `-journal`, `-wal`, and `-shm` files are left out of the archive.
+
 ### Restoring
 Because the layout mirrors the filesystem, restoring is a single extraction onto `/`. Use `bsdtar` (libarchive, the `libarchive-tools` package on Debian/Ubuntu), which restores contents, permissions, owners, modification times, and symbolic links:
 ```bash
@@ -75,9 +77,11 @@ sudo bsdtar -xpf <archive>.zip -C /
 ```
 Extract into an empty directory with `-C <dir>` to inspect a backup first.
 
+To restore the server's database, stop the server first (`docker compose stop`), extract the snapshot into an empty directory, copy it over `mediagarrd.db` in the mounted database directory (`./data/server/db`), then start the server again. Do not extract it over a running server's database. Extracting the whole archive with `-C /` also writes the database to its host path, which is only safe while the server is stopped.
+
 Info-ZIP `unzip -o <archive>.zip -d /` restores contents, permissions, and symbolic links, but UnZip 6.00 (the version most distributions ship) does not restore owners, so files end up owned by whoever ran it. Tools that ignore Unix metadata, such as Python's `zipfile` or most GUI archive managers, restore only the file contents.
 
 > **Security:** the server needs `/var/run/docker.sock`, which gives it root-equivalent access to the host. During setup the configuration API requires the PIN session, but once setup is finished the API is unauthenticated, so do not expose the server port to untrusted networks.
 
 ## License
-[GPLv3](./LICENSE)
+[MIT](./LICENSE)

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseUtils.Status.COMPLETED;
 import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseUtils.Status.FAILED;
@@ -16,10 +17,16 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -300,6 +307,145 @@ class DatabaseServiceTest {
 
         assertEquals(List.of(), db.fetchServices());
         assertEquals(1, quarantinedContents().size());
+    }
+
+    @Test
+    void snapshotIsAValidCopyWithTheSameRowsAndVersion() throws Exception {
+        db.addService(RADARR);
+        db.saveSetting("backup_root", "/backups");
+        db.addNewBackupRecord(backupRun("run-1", "2026-01-01 00:00:00", serviceResult("radarr", COMPLETED, null)));
+        Path snapshot = tempDir.resolve("snapshot.db");
+
+        db.snapshotTo(snapshot);
+
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + snapshot); var statement = connection.createStatement()) {
+            assertEquals("ok", statement.executeQuery("PRAGMA quick_check").getString(1));
+            assertEquals(2, statement.executeQuery("PRAGMA user_version").getInt(1));
+            assertEquals("/backups", statement.executeQuery("SELECT value FROM settings WHERE key = 'backup_root'").getString(1));
+            assertEquals("radarr", statement.executeQuery("SELECT name FROM services").getString(1));
+            assertEquals("run-1", statement.executeQuery("SELECT archive_id FROM backups").getString(1));
+            assertEquals("radarr", statement.executeQuery("SELECT service_name FROM backup_services").getString(1));
+        }
+        assertEquals(List.of(RADARR), db.fetchServices());
+    }
+
+    @Test
+    void snapshotHandlesQuotesInTheTargetPath() throws Exception {
+        Path snapshot = Files.createDirectories(tempDir.resolve("it's here")).resolve("snapshot.db");
+
+        db.snapshotTo(snapshot);
+
+        assertTrue(Files.isRegularFile(snapshot));
+    }
+
+    @Test
+    void snapshotRefusesToOverwriteAnExistingFile() throws Exception {
+        Path existing = tempDir.resolve("existing.db");
+        Files.writeString(existing, "keep me");
+
+        assertThrows(IOException.class, () -> db.snapshotTo(existing));
+
+        assertEquals("keep me", Files.readString(existing));
+    }
+
+    @Test
+    void snapshotFailsForAMissingDatabaseWithoutCreatingOne() throws Exception {
+        Files.delete(databaseFile());
+        Path snapshot = tempDir.resolve("snapshot.db");
+
+        assertThrows(IOException.class, () -> db.snapshotTo(snapshot));
+
+        assertFalse(Files.exists(databaseFile()));
+        assertFalse(Files.exists(snapshot));
+    }
+
+    @Test
+    void snapshotFailsForACorruptDatabaseWithoutMovingItAside() throws Exception {
+        Files.writeString(databaseFile(), "x".repeat(4096));
+        Path snapshot = tempDir.resolve("snapshot.db");
+
+        assertThrows(SQLException.class, () -> db.snapshotTo(snapshot));
+
+        assertFalse(Files.exists(snapshot));
+        assertEquals("x".repeat(4096), Files.readString(databaseFile()));
+        assertEquals(List.of(), quarantinedContents());
+    }
+
+    @Test
+    void writesWaitWhileTheSnapshotIsBeingTaken() throws Exception {
+        CountDownLatch snapshotting = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        DatabaseService paused = new DatabaseService(properties) {
+            @Override
+            protected Connection openSnapshotConnection(Path file) throws SQLException {
+                snapshotting.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return super.openSnapshotConnection(file);
+            }
+        };
+        paused.saveSetting("backup_root", "/before");
+
+        CompletableFuture<Void> snapshot = CompletableFuture.runAsync(() -> {
+            try {
+                paused.snapshotTo(tempDir.resolve("snapshot.db"));
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        });
+        assertTrue(snapshotting.await(5, TimeUnit.SECONDS));
+
+        CompletableFuture<Void> write = CompletableFuture.runAsync(() -> paused.saveSetting("backup_root", "/during"));
+        CompletableFuture<Void> delete = CompletableFuture.runAsync(() -> paused.deleteBackupRecordById("none"));
+        CompletableFuture<Void> insert = CompletableFuture.runAsync(() ->
+            paused.addNewBackupRecord(backupRun("run-2", "2026-01-01 00:00:00", serviceResult("radarr", COMPLETED, null))));
+        assertThrows(TimeoutException.class, () -> write.get(300, TimeUnit.MILLISECONDS));
+        assertFalse(delete.isDone());
+        assertFalse(insert.isDone());
+
+        release.countDown();
+        snapshot.get(5, TimeUnit.SECONDS);
+        write.get(5, TimeUnit.SECONDS);
+        delete.get(5, TimeUnit.SECONDS);
+        insert.get(5, TimeUnit.SECONDS);
+
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + tempDir.resolve("snapshot.db"));
+            var statement = connection.createStatement()) {
+            assertEquals("/before", statement.executeQuery("SELECT value FROM settings WHERE key = 'backup_root'").getString(1));
+            assertFalse(statement.executeQuery("SELECT 1 FROM backups").next());
+        }
+        assertEquals(Optional.of("/during"), paused.fetchSetting("backup_root"));
+        assertTrue(paused.fetchBackupById("run-2").isPresent());
+    }
+
+    @Test
+    void snapshotsDoNotDeadlockWithIntegrityChecksAndWrites() {
+        assertTimeoutPreemptively(Duration.ofSeconds(60), () -> {
+            List<CompletableFuture<Void>> work = new ArrayList<>();
+            for (int i = 0; i < 4; i++) {
+                int worker = i;
+                work.add(CompletableFuture.runAsync(() -> {
+                    for (int n = 0; n < 15; n++) {
+                        try {
+                            db.snapshotTo(tempDir.resolve("snapshot-" + worker + "-" + n + ".db"));
+                        } catch (Exception e) {
+                            throw new IllegalStateException(e);
+                        }
+                    }
+                }));
+                work.add(CompletableFuture.runAsync(() -> {
+                    for (int n = 0; n < 30; n++) {
+                        db.saveSetting("backup_root", "/" + n);
+                        db.fetchServices();
+                        db.verifyDatabaseIntegrity();
+                    }
+                }));
+            }
+            CompletableFuture.allOf(work.toArray(CompletableFuture[]::new)).get();
+        });
     }
 
     private Path databaseFile() {

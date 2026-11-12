@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import com.github.dockerjava.api.DockerClient;
+import com.github.dockerjava.api.command.InspectContainerResponse;
 import com.github.dockerjava.api.exception.NotFoundException;
 import com.github.dockerjava.api.model.Container;
 import com.github.dockerjava.api.model.HostConfig;
@@ -56,6 +57,11 @@ public class DockerService {
 
     public InputStream copyFrom(String containerId, String hostPath) {
         return client.copyArchiveFromContainerCmd(containerId, containerPath(hostPath)).exec();
+    }
+
+    public List<InspectContainerResponse.Mount> mountsOf(String containerId) {
+        List<InspectContainerResponse.Mount> mounts = client.inspectContainerCmd(containerId).exec().getMounts();
+        return mounts == null ? List.of() : mounts;
     }
 
     public void removeContainers(String serviceName) {

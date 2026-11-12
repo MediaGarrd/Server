@@ -167,7 +167,7 @@ public class ServiceBackupRunner {
         return entry;
     }
 
-    private static X7875_NewUnix owner(long uid, long gid) {
+    static X7875_NewUnix owner(long uid, long gid) {
         X7875_NewUnix owner = new X7875_NewUnix();
         owner.setUID(uid);
         owner.setGID(gid);

@@ -9,6 +9,7 @@ import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseUtil
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -40,6 +41,7 @@ public class BackupOrchestratorService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(BackupOrchestratorService.class);
 
+    private static final String SNAPSHOT_NAME = DatabaseSnapshotService.SERVICE_NAME;
     private static final int RUNNER_POOL_SIZE = 6;
     private static final long RUNNER_IDLE_TTL_SECONDS = 30;
     private static final long SCHEDULED_CHECK_INTERVAL_MS = 30000;
@@ -48,6 +50,7 @@ public class BackupOrchestratorService {
     private final ServiceBackupRunner runner;
     private final BackupArchiveService archiveService;
     private final BackupScheduleService scheduleService;
+    private final DatabaseSnapshotService snapshotService;
     private final DatabaseService db;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final ReentrantReadWriteLock configLock = new ReentrantReadWriteLock();
@@ -57,11 +60,13 @@ public class BackupOrchestratorService {
         ServiceBackupRunner runner,
         BackupArchiveService archiveService,
         BackupScheduleService scheduleService,
+        DatabaseSnapshotService snapshotService,
         DatabaseService db
     ) {
         this.runner = runner;
         this.archiveService = archiveService;
         this.scheduleService = scheduleService;
+        this.snapshotService = snapshotService;
         this.db = db;
     }
 
@@ -156,19 +161,32 @@ public class BackupOrchestratorService {
                 throw new IllegalStateException("Every service failed, no archive created: " + errorMessage);
             }
 
+            BackupServiceResult snapshotResult = snapshotDatabase(runDir);
+            List<BackupServiceResult> recordedResults = new ArrayList<>(serviceRunResults);
+            recordedResults.add(snapshotResult);
+            boolean snapshotFailed = !COMPLETED.equals(snapshotResult.status());
+            if (snapshotFailed) {
+                LOGGER.warn("Database snapshot did not complete (non-fatal): {}", snapshotResult.errorMessage());
+                String snapshotError = SNAPSHOT_NAME + ": " + Objects.requireNonNullElse(snapshotResult.errorMessage(), "no details");
+                errorMessage = errorMessage.isEmpty() ? snapshotError : errorMessage + "\n" + snapshotError;
+            }
+
             BackupArchive archive = archiveService.createArchive(runDirectory);
-            serviceRunResults.forEach(r -> r.setId(archive.id()));
+            recordedResults.forEach(r -> r.setId(archive.id()));
 
             long durationMs = Duration.between(startedAt, Instant.now()).toMillis();
             LOGGER.info("Backup run complete: archive={}, size={}B, duration={}ms, services={}",
                 archive.fileName(), archive.sizeBytes(), durationMs,
-                serviceRunResults.stream().map(BackupServiceResult::serviceName).toList());
+                recordedResults.stream().map(BackupServiceResult::serviceName).toList());
 
             String status = succeeded == services.size() ? COMPLETED : succeeded > 0 ? PARTIAL : FAILED;
+            if (snapshotFailed && COMPLETED.equals(status)) {
+                status = PARTIAL;
+            }
 
             BackupRunResult backupRecord = new BackupRunResult(
                 archive.id(), formatTime(startedAt), recordCurrentTime(), status,
-                serviceRunResults, archive, errorMessage);
+                recordedResults, archive, errorMessage);
             db.addNewBackupRecord(backupRecord);
             return backupRecord;
         } finally {
@@ -178,6 +196,15 @@ public class BackupOrchestratorService {
             }
             configLock.readLock().unlock();
             running.set(false);
+        }
+    }
+
+    private BackupServiceResult snapshotDatabase(Path runDir) {
+        try {
+            return snapshotService.snapshot(runDir);
+        } catch (RuntimeException e) {
+            LOGGER.warn("[{}] Failed to snapshot database", SNAPSHOT_NAME, e);
+            return failedResult(SNAPSHOT_NAME, e);
         }
     }
 

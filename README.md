@@ -1,10 +1,16 @@
 # Server
 
-This is the official server for [MediaGarrd](https://github.com/MediaGarrd/MediaGarrd).
+The official server for [MediaGarrd](https://github.com/MediaGarrd/MediaGarrd). It backs up the configuration of the services on its host into a single zip archive on a schedule, and the [MediaGarrd Client](https://github.com/MediaGarrd/Client) manages it and downloads the archives to another machine.
+
+Full documentation, including configuration, archives and restoring, is on the [MediaGarrd website](https://mediagarrd.github.io/MediaGarrd/).
+
+## Docs
+- [settings.md](./docs/settings.md): every environment variable and its default.
+- [API.md](./docs/API.md): every HTTP endpoint and what it returns.
+- [database.md](./docs/database.md): recovering the server's database from a backup.
 
 ## Requirements
-- A Linux host running Docker with Compose v2 (`docker compose ...`)
-- The host paths of the services you want to back up
+- A Linux host running Docker with Compose v2
 
 ## Installation
 ```bash
@@ -14,96 +20,19 @@ cp docker-compose.example.yml docker-compose.yml
 docker compose up --build -d
 ```
 
-The defaults in `docker-compose.yml` work as-is. To change them before the first start:
-- **Port:** change both `SERVER_PORT` and the `ports` mapping (default `38471`).
-- **Where archives are stored on the host:** change the left side of the `./data/server/backups` volume.
-- **Where the database is stored on the host:** change the left side of the `./data/server/db` volume. This holds every setting and service, so keep it on persistent storage.
-
-## First-time setup
-Until setup is finished, the server prints a single-use setup PIN to its logs:
+Then get the single-use setup PIN from the logs:
 ```bash
 docker logs mediagarrd-server 2>&1 | grep "Setup PIN"
 ```
-From any device on the network, open `http://<server-ip>:38471/config` and enter the PIN. A new PIN is logged each time one is used, after 5 wrong attempts, and on every restart.
-
-On the setup page:
-1. **Backup Settings:** the backup location (a path *inside* the container that must be on a mounted volume, default `/var/lib/mediagarrd/backups`), the hours between backups, and how many backups to keep.
-2. **Services:** add each service with a name and the absolute **host** paths to back up. Any service can be backed up. A path can be a directory (everything inside it is included) or a single file (only that file is included).
-3. **Finish Setup:** available once at least one service exists. The setup page is then disabled for good.
-
-## Configuration after setup
-Every setting is stored in the database and survives restarts and container rebuilds. After setup, change them through the API or the MediaGarrd Client:
-
-| Setting | Endpoint |
-|---------|----------|
-| Read all settings | `GET /api/v1/config` |
-| Backup location and/or backups to keep | `PUT /api/v1/config` with `{"backupLocation": "/path", "retentionCount": 10}` |
-| Time between backups (ISO-8601) | `PUT /api/v1/schedule` with `{"backupInterval": "PT12H"}` |
-| List / add services | `GET` / `POST /api/v1/services` with `{"name": "radarr", "paths": ["/srv/radarr/config"]}` |
-| Update / remove a service | `PUT` / `DELETE /api/v1/services/{name}` |
-| Server version and update status (no setup session needed) | `GET /api/v1/version` |
-| Live run status stream (no setup session needed) | `GET /api/v1/events` |
-
-`GET /api/v1/events` is a Server-Sent Events stream (`text/event-stream`) of run status. It sends `state` (`{"running":false,"at":"..."}`) as soon as you connect, `run-started` (`{"running":true,"startedAt":"..."}`) and `run-finished` (`{"running":false,"status":"COMPLETED","startedAt":"...","finishedAt":"..."}`, status is `COMPLETED`, `PARTIAL`, or `FAILED`) when a run begins and ends, `backups-changed` and `config-changed` (both `{"at":"..."}`) after a backup is deleted or the backup location changes, and after the schedule, settings, or services change, and a `ping` (`{}`) every 20 seconds. A run that is rejected before it starts (such as no services configured) publishes no run events. A scheduled check with nothing to back up waits one full interval, and adding or editing a service makes the schedule due again right away. Up to 16 listeners are served at once (more get `503`), and each stream ends cleanly after 4.5 minutes so listeners should reconnect. The MediaGarrd Client uses it to show Running and Idle the moment a run starts or ends, and falls back to polling `/api/v1/health` when it is unavailable.
-
-Configuration changes are rejected with `409 Conflict` while a backup is running. A lower retention count takes effect on the next backup run.
-
-`MEDIAGARRD_BACKUP_INTERVAL` and `MEDIAGARRD_RETENTION_COUNT` in `docker-compose.yml` only set the initial values. Once a value has been saved through setup or the API, the stored value is used.
-
-The database is checked on startup and whenever its schema changes underneath the server. If it is deleted, has a table dropped, or is replaced by an older copy, it is rebuilt or upgraded automatically. A corrupt database is moved aside to `mediagarrd.db.corrupt-<timestamp>` and replaced with an empty one, after which settings and services must be configured again (restart the server to get a new setup PIN).
-
-## Update alerts
-The server checks the latest release of `MediaGarrd/Server` on GitHub a few seconds after starting and then once a day, and keeps the result in memory. `GET /api/v1/version` returns it and needs no setup session:
-
-```json
-{
-  "currentVersion": "0.1.0",
-  "latestVersion": "0.2.0",
-  "releaseUrl": "https://github.com/MediaGarrd/Server/releases/tag/v0.2.0",
-  "updateAvailable": true,
-  "checkState": "OK",
-  "checkedAt": "2026-11-11T18:00:00Z",
-  "message": null
-}
-```
-`checkState` is `NOT_CHECKED` until the first check finishes, `OK` when a release was found, `NO_RELEASES` when none has been published yet, and `ERROR` when GitHub could not be asked (`message` says why). A failed check never affects backups and is tried again at the next interval. The MediaGarrd Client shows the result in its Versions panel.
-
-To change what is checked, set `MEDIAGARRD_UPDATE_REPOSITORY` (default `MediaGarrd/Server`), `MEDIAGARRD_GITHUB_API_URL` (default `https://api.github.com`), or `MEDIAGARRD_UPDATE_CHECK_INTERVAL` (ISO-8601, default `PT24H`, minimum `PT1H`) in `environment`.
+Open `http://<server-ip>:38471/config`, enter the PIN, add the services to back up, and finish setup.
 
 ## Updating
 ```bash
 git pull
 docker compose up --build -d
 ```
-Settings, services, and archives live in the mounted `./data/server` volumes and are kept.
 
-## How backups work
-On every backup run the server creates (but never starts) a small helper container per service with its paths mounted read-only, and streams them into the backup archive through the Docker API. The helper container is reused until the service's paths change.
-
-### Archive layout
-Every entry in a backup zip sits at its absolute host path without the leading `/`, with no per-service folder. A service backing up `/etc/nginx/sites-available/default` and `/srv/radarr/config` produces:
-```
-etc/nginx/sites-available/default
-srv/radarr/config/
-srv/radarr/config/config.xml
-...
-```
-Each entry keeps its permissions, owner (uid/gid), and modification time. Symbolic links are stored as links, empty directories are kept, and hard links are stored as regular copies. Named pipes, sockets, and device files are skipped. If two services back up the same path it appears once. If a path fails to copy, none of it is included and the run is reported as partial.
-
-Every archive also contains a consistent snapshot of the server's own database (settings, services, and backup records) at the database file's absolute host path, for example `home/you/MediaGarrd/data/server/db/mediagarrd.db` when `./data/server/db` is mounted at `/var/lib/mediagarrd/db`. The server finds that host path by inspecting its own container, and no other database operation runs while the snapshot is taken. If the path cannot be resolved or the snapshot fails, the archive is still created, the run is reported as partial, and the error is listed under `_mediagarrd-server` (which also shows up in each run's service list). The snapshot never contains the record of its own run. On Docker Desktop (macOS and Windows) the host path reported by Docker is a path inside its VM, so the snapshot's location in the archive will not match your real host path. If a service also backs up the database directory, the snapshot replaces that service's copy of the database file, and its `-journal`, `-wal`, and `-shm` files are left out of the archive.
-
-### Restoring
-Because the layout mirrors the filesystem, restoring is a single extraction onto `/`. Use `bsdtar` (libarchive, the `libarchive-tools` package on Debian/Ubuntu), which restores contents, permissions, owners, modification times, and symbolic links:
-```bash
-sudo bsdtar -xpf <archive>.zip -C /
-```
-Extract into an empty directory with `-C <dir>` to inspect a backup first.
-
-To restore the server's database, stop the server first (`docker compose stop`), extract the snapshot into an empty directory, copy it over `mediagarrd.db` in the mounted database directory (`./data/server/db`), then start the server again. Do not extract it over a running server's database. Extracting the whole archive with `-C /` also writes the database to its host path, which is only safe while the server is stopped.
-
-Info-ZIP `unzip -o <archive>.zip -d /` restores contents, permissions, and symbolic links, but UnZip 6.00 (the version most distributions ship) does not restore owners, so files end up owned by whoever ran it. Tools that ignore Unix metadata, such as Python's `zipfile` or most GUI archive managers, restore only the file contents.
-
-> **Security:** the server needs `/var/run/docker.sock`, which gives it root-equivalent access to the host. During setup the configuration API requires the PIN session, but once setup is finished the API is unauthenticated, so do not expose the server port to untrusted networks.
+> **Security:** the server mounts `/var/run/docker.sock`, which gives it root-equivalent access to the host, and its API is unauthenticated after setup. Do not expose its port to untrusted networks.
 
 ## License
 [MIT](./LICENSE)

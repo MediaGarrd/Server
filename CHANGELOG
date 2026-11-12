@@ -1,10 +1,55 @@
 # CHANGELOG
 
-## TBD
-- Adding more detailed logging for service runners
-- Renaming QBittorrent's "graveyard" directory to "saved-torrents" to make it less ambiguous
+## 11-12-26
+- A run rejected before it starts (such as no services configured) publishes no run events
+- A scheduled check with nothing to back up now waits one full interval instead of retrying every 30 seconds, and adding or editing a service makes the schedule due again right away
+- `GET /api/v1/events` also sends `backups-changed` (backup deleted, backup location changed) and `config-changed` (schedule, settings, or services changed), each as `{"at":"<ISO-8601>"}`
+- `GET /api/v1/health` and `GET /api/v1/backups` are logged at DEBUG, so polling no longer fills the log
+
+## 11-11-26
+- `GET /api/v1/events` is a live Server-Sent Events stream that needs no setup session: `state` on connect, `run-started` and `run-finished` (`COMPLETED`, `PARTIAL`, or `FAILED`) the moment a run begins and ends, and a `ping` every 20 seconds
+- At most 16 listeners are served (more get `503`), a slow or dead listener is dropped without slowing a backup, and each stream ends cleanly after 4.5 minutes so clients reconnect without errors in the log
+- Fixed a failed delete of a run's temporary directory leaving the server stuck on "running" and rejecting configuration changes until restart
+- The server knows its version (`0.1.0`) and checks GitHub for the latest `MediaGarrd/Server` release shortly after starting and then daily
+- `GET /api/v1/version` (no setup session needed) reports the current and latest version, whether an update is available, the release link, when the last check ran, and its state (`OK`, `NO_RELEASES`, `ERROR`, or `NOT_CHECKED`)
+- A failed check (offline, rate limited, no release yet) is logged once, shown as a state, and never affects backups
+- `MEDIAGARRD_UPDATE_REPOSITORY`, `MEDIAGARRD_GITHUB_API_URL`, and `MEDIAGARRD_UPDATE_CHECK_INTERVAL` change the repository, API address, and check interval (at least `PT1H`, or the server refuses to start)
+- Scheduled tasks run on two threads (`spring.task.scheduling.pool.size: 2`), so a slow GitHub check cannot delay backups
+
+## 11-05-26
+- Every archive includes a consistent snapshot of the server's own database (settings, services, backup records) at its absolute host path, so the future recovery tool and `bsdtar -xpf <archive> -C /` restore it in place
+- The host path is found by inspecting the server's own container. If that or the snapshot fails, the run is partial with the error logged, and a corrupt or missing database is never replaced by an empty one
+- Database operations wait while the snapshot is taken, so nothing is written mid-copy
+- The snapshot appears as `_mediagarrd-server` in service results and service names, and a service copy of the database file or its `-journal`, `-wal`, and `-shm` files no longer replaces or sits next to it
+- Documented how to restore the database from an archive
+
+## 10-26-26
+- Services are stored in the database and managed from `/config` or `/api/v1/services`, and any service can be backed up
+- Backup location can be changed at runtime from `/config` or `PUT /api/v1/config`
+- Backup interval and retention count are stored in the database, retention is settable through `PUT /api/v1/config`, and `GET /api/v1/config` returns every setting
+- Configuration changes are rejected while a backup is running, so a run never sees its services change
+- One runner now copies each service's paths through a cached, read-only helper container via the Docker socket, replacing the per-service runners
+- Added first-time web setup reachable from the network, unlocked with a single-use PIN printed in the server logs and disabled once setup is finished
+- `docker-compose.example.yml` works without `install.sh`
+- Archives are laid out by absolute host path with no per-service folder, so `bsdtar -xpf <archive> -C /` restores them
+- Archives keep permissions, owners, modification times, symbolic links, and empty directories, and a path that fails to copy leaves no partial files
+- Fixed special files (pipes, devices) being archived as empty regular files
+- Fixed checksums loading the whole archive into memory and dropping leading zeros, and archive sizes over 2 GB being recorded incorrectly
+- Every API endpoint returns errors as `{"error": "..."}` with a matching status code
+- The database schema is verified once and then re-checked with one query per call, rebuilding or upgrading the database when it is deleted, altered, or replaced, and moving a corrupt one aside
+- Fixed migration versioning
+- Added Structurizr diagrams, Lombok for model classes, integration test and issue label workflows, and a pull request check that requires every linked issue to be approved
+
+## 9-23-26
+- Added a database for backup records, with thorough tests
+- Added issue templates
+- Removed auto-routing to `appdata/` within archives so configs keep their actual paths
+
+## 9-16-26
+- More detailed logging for service runners
+- Renamed QBittorrent's "graveyard" directory to "saved-torrents"
 
 ## 9-6-26
-- Abstracting services to make adding new ones easier
-- Adding new tests
-- Project renaming
+- Abstracted services to make adding new ones easier
+- Added new tests
+- Renamed the project

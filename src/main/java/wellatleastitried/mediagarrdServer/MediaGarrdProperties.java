@@ -17,4 +17,7 @@ public class MediaGarrdProperties {
     private int retentionCount = 10;
     private String databasePath = "/var/lib/mediagarrd/db/mediagarrd.db";
     private String helperImage = "busybox:stable";
+    private String updateRepository = "MediaGarrd/Server";
+    private String githubApiBaseUrl = "https://api.github.com";
+    private Duration updateCheckInterval = Duration.ofHours(24);
 }

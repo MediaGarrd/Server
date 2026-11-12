@@ -41,12 +41,34 @@ Every setting is stored in the database and survives restarts and container rebu
 | Time between backups (ISO-8601) | `PUT /api/v1/schedule` with `{"backupInterval": "PT12H"}` |
 | List / add services | `GET` / `POST /api/v1/services` with `{"name": "radarr", "paths": ["/srv/radarr/config"]}` |
 | Update / remove a service | `PUT` / `DELETE /api/v1/services/{name}` |
+| Server version and update status (no setup session needed) | `GET /api/v1/version` |
+| Live run status stream (no setup session needed) | `GET /api/v1/events` |
+
+`GET /api/v1/events` is a Server-Sent Events stream (`text/event-stream`) of run status. It sends `state` (`{"running":false,"at":"..."}`) as soon as you connect, `run-started` (`{"running":true,"startedAt":"..."}`) and `run-finished` (`{"running":false,"status":"COMPLETED","startedAt":"...","finishedAt":"..."}`, status is `COMPLETED`, `PARTIAL`, or `FAILED`) when a run begins and ends, `backups-changed` and `config-changed` (both `{"at":"..."}`) after a backup is deleted or the backup location changes, and after the schedule, settings, or services change, and a `ping` (`{}`) every 20 seconds. A run that is rejected before it starts (such as no services configured) publishes no run events. A scheduled check with nothing to back up waits one full interval, and adding or editing a service makes the schedule due again right away. Up to 16 listeners are served at once (more get `503`), and each stream ends cleanly after 4.5 minutes so listeners should reconnect. The MediaGarrd Client uses it to show Running and Idle the moment a run starts or ends, and falls back to polling `/api/v1/health` when it is unavailable.
 
 Configuration changes are rejected with `409 Conflict` while a backup is running. A lower retention count takes effect on the next backup run.
 
 `MEDIAGARRD_BACKUP_INTERVAL` and `MEDIAGARRD_RETENTION_COUNT` in `docker-compose.yml` only set the initial values. Once a value has been saved through setup or the API, the stored value is used.
 
 The database is checked on startup and whenever its schema changes underneath the server. If it is deleted, has a table dropped, or is replaced by an older copy, it is rebuilt or upgraded automatically. A corrupt database is moved aside to `mediagarrd.db.corrupt-<timestamp>` and replaced with an empty one, after which settings and services must be configured again (restart the server to get a new setup PIN).
+
+## Update alerts
+The server checks the latest release of `MediaGarrd/Server` on GitHub a few seconds after starting and then once a day, and keeps the result in memory. `GET /api/v1/version` returns it and needs no setup session:
+
+```json
+{
+  "currentVersion": "0.1.0",
+  "latestVersion": "0.2.0",
+  "releaseUrl": "https://github.com/MediaGarrd/Server/releases/tag/v0.2.0",
+  "updateAvailable": true,
+  "checkState": "OK",
+  "checkedAt": "2026-11-11T18:00:00Z",
+  "message": null
+}
+```
+`checkState` is `NOT_CHECKED` until the first check finishes, `OK` when a release was found, `NO_RELEASES` when none has been published yet, and `ERROR` when GitHub could not be asked (`message` says why). A failed check never affects backups and is tried again at the next interval. The MediaGarrd Client shows the result in its Versions panel.
+
+To change what is checked, set `MEDIAGARRD_UPDATE_REPOSITORY` (default `MediaGarrd/Server`), `MEDIAGARRD_GITHUB_API_URL` (default `https://api.github.com`), or `MEDIAGARRD_UPDATE_CHECK_INTERVAL` (ISO-8601, default `PT24H`, minimum `PT1H`) in `environment`.
 
 ## Updating
 ```bash

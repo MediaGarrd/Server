@@ -11,7 +11,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 @SpringBootTest(properties = {
     "mediagarrd.backup-root=${java.io.tmpdir}/mediagarrd-binding-test/backups",
     "mediagarrd.database-path=${java.io.tmpdir}/mediagarrd-binding-test/mediagarrd.db",
-    "mediagarrd.helper-image=alpine:3"
+    "mediagarrd.helper-image=alpine:3",
+    "mediagarrd.github-api-base-url=http://127.0.0.1:1"
 })
 class MediaGarrdPropertiesBindingTest {
 
@@ -27,5 +28,7 @@ class MediaGarrdPropertiesBindingTest {
         assertEquals(tmp + "/mediagarrd-binding-test/backups", properties.getBackupRoot());
         assertEquals(tmp + "/mediagarrd-binding-test/mediagarrd.db", properties.getDatabasePath());
         assertEquals("alpine:3", properties.getHelperImage());
+        assertEquals("MediaGarrd/Server", properties.getUpdateRepository());
+        assertEquals("http://127.0.0.1:1", properties.getGithubApiBaseUrl());
     }
 }

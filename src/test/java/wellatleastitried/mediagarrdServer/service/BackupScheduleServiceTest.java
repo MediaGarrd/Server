@@ -83,4 +83,41 @@ class BackupScheduleServiceTest {
         db.saveSetting(BACKUP_INTERVAL_SETTING, "PT0S");
         assertEquals(Duration.ofHours(2), new BackupScheduleService(properties, db).getInterval());
     }
+
+    @Test
+    void deferringTheNextRunStopsItBeingDueUntilTheIntervalElapses() throws Exception {
+        BackupScheduleService service = new BackupScheduleService(properties, db);
+        service.updateInterval(Duration.ofMillis(1));
+        Thread.sleep(5);
+        assertTrue(service.dueNow());
+
+        service.updateInterval(Duration.ofHours(1));
+        Thread.sleep(5);
+        service.deferNextRun();
+
+        assertFalse(service.dueNow());
+        assertTrue(service.getNextRun().isAfter(java.time.Instant.now().plus(Duration.ofMinutes(59))));
+    }
+
+    @Test
+    void addingAServiceAfterADeferralMakesTheScheduleDueNow() {
+        BackupScheduleService service = new BackupScheduleService(properties, db);
+        service.deferNextRun();
+        assertFalse(service.dueNow());
+
+        service.releaseDeferral();
+
+        assertTrue(service.dueNow());
+    }
+
+    @Test
+    void releasingWithoutADeferralChangesNothing() {
+        BackupScheduleService service = new BackupScheduleService(properties, db);
+        java.time.Instant before = service.getNextRun();
+
+        service.releaseDeferral();
+
+        assertEquals(before, service.getNextRun());
+        assertFalse(service.dueNow());
+    }
 }

@@ -25,7 +25,7 @@ Never restore over the database of a running server.
 2. Extract the copy into an empty directory:
    ```bash
    mkdir restore
-   bsdtar -xpf <archive>.zip -C restore '<path from the listing above>'
+   bsdtar -xpPf <archive>.zip -C restore '<path from the listing above>'
    ```
 3. Copy it over the current database in the mounted database directory (`./data/server/db` with the example compose file):
    ```bash
@@ -37,7 +37,7 @@ Never restore over the database of a running server.
    docker compose start
    ```
 
-`bsdtar` is in the `libarchive-tools` package on Debian and Ubuntu. Extracting the whole archive with `-C /` also writes the database to its host path, which is only safe while the server is stopped.
+`bsdtar` is in the `libarchive-tools` package on Debian and Ubuntu. `-P` lets it extract through symbolic links stored in the archive. Extracting the whole archive with `-C /` also writes the database to its host path, which is only safe while the server is stopped.
 
 ## If the database is damaged
 The server checks its database on startup. A missing or outdated database is rebuilt or upgraded automatically. A corrupt one is moved aside to `mediagarrd.db.corrupt-<timestamp>` and replaced with an empty database, so the server starts again with no settings or services. Restore a copy from the newest archive as above to get them back, or restart the server and use its new setup PIN to configure it again.

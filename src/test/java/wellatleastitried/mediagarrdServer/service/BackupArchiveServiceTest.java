@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseUtils.RETENTION_COUNT_SETTING;
-import static wellatleastitried.mediagarrdServer.service.ServiceBackupRunnerTest.contents;
+import static wellatleastitried.mediagarrdServer.service.ArchiveTestSupport.contents;
 import static wellatleastitried.mediagarrdServer.service.ServiceBackupRunnerTest.dir;
 import static wellatleastitried.mediagarrdServer.service.ServiceBackupRunnerTest.file;
 import static wellatleastitried.mediagarrdServer.service.ServiceBackupRunnerTest.link;
@@ -28,6 +28,7 @@ import org.apache.commons.compress.archivers.zip.ZipFile;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
@@ -102,29 +103,37 @@ class BackupArchiveServiceTest {
     }
 
     @Test
-    void overlappingPathsAcrossServicesAppearOnce() throws Exception {
+    void aDuplicateNameAcrossPartsFailsTheMergeAndLeavesNoArchive() throws Exception {
         Path run = service.createRunDirectory();
         part(run, "a", 0, "/srv/shared", tar(dir("shared/"), file("shared/x", "1")));
         part(run, "b", 0, "/srv/shared", tar(dir("shared/"), file("shared/x", "1")));
 
-        BackupArchive archive = service.createArchive(run);
+        assertThrows(IllegalStateException.class, () -> service.createArchive(run));
 
-        assertEquals(Map.of("srv/shared/", "", "srv/shared/x", "1"), contents(archive.path()));
+        try (var files = Files.list(service.rootDirectory())) {
+            assertEquals(List.of("runs"), files.map(path -> path.getFileName().toString()).toList());
+        }
+        assertFalse(Files.exists(run.resolve("merge-names.idx")));
     }
 
     @Test
-    void directoriesPrecedeTheirContentsAcrossParts() throws Exception {
+    void partsAreWrittenInSortedPathOrderWithTheSnapshotFirst() throws Exception {
+        db.saveSetting("backup_root", "/marker");
+        DatabaseHostPathResolver hostPaths = mock(DatabaseHostPathResolver.class);
+        when(hostPaths.resolve(db.databaseFile())).thenReturn(Path.of("/srv/zzz/mediagarrd.db"));
         Path run = service.createRunDirectory();
         Item restricted = dir("a/");
         restricted.entry().setMode(040700);
-        part(run, "child", 0, "/srv/a/b", tar(dir("b/"), file("b/x", "1")));
-        part(run, "parent", 0, "/srv/a", tar(restricted, dir("a/b/"), file("a/b/x", "1"), file("a/y", "2")));
+        part(run, "second", 0, "/srv/b", tar(dir("b/"), file("b/x", "1")));
+        part(run, "first", 1, "/srv/a", tar(restricted, dir("a/c/"), file("a/c/x", "1"), file("a/y", "2")));
+        part(run, "first", 0, "/srv/a0", tar(file("a0", "0")));
+        assertEquals(COMPLETED, new DatabaseSnapshotService(db, hostPaths, new ZipCompression(1)).snapshot(run).status());
 
         BackupArchive archive = service.createArchive(run);
 
         try (ZipFile zip = ZipFile.builder().setPath(archive.path()).get()) {
             List<String> order = java.util.Collections.list(zip.getEntriesInPhysicalOrder()).stream().map(ZipArchiveEntry::getName).toList();
-            assertEquals(List.of("srv/a/", "srv/a/b/", "srv/a/b/x", "srv/a/y"), order);
+            assertEquals(List.of("srv/zzz/mediagarrd.db", "srv/a0", "srv/a/", "srv/a/c/", "srv/a/c/x", "srv/a/y", "srv/b/", "srv/b/x"), order);
             assertEquals(UnixStat.DIR_FLAG | 0700, zip.getEntry("srv/a/").getUnixMode());
         }
     }
@@ -141,7 +150,7 @@ class BackupArchiveServiceTest {
     @Test
     void failedMergeLeavesNoArchiveBehind() throws Exception {
         Path run = service.createRunDirectory();
-        Files.writeString(run.resolve("corrupt.zip"), "not a zip");
+        Files.writeString(run.resolve("corrupt.part"), "not a part");
 
         assertThrows(IllegalStateException.class, () -> service.createArchive(run));
 
@@ -289,22 +298,23 @@ class BackupArchiveServiceTest {
     }
 
     @Test
-    void theDatabaseSnapshotAlwaysWinsOverServiceCopiesOfTheSamePath() throws Exception {
+    void theDatabaseSnapshotWinsOverServiceCopiesThatAreExcludedWhileCopying() throws Exception {
         db.saveSetting("backup_root", "/marker");
         DatabaseHostPathResolver hostPaths = mock(DatabaseHostPathResolver.class);
         String entry = "srv/mediagarrd/db/mediagarrd.db";
         when(hostPaths.resolve(db.databaseFile())).thenReturn(Path.of("/" + entry));
         Path run = service.createRunDirectory();
-        part(run, "Mediagarrd", 0, "/srv/mediagarrd/db", tar(
+        var excluded = DatabaseSnapshotService.reservedNames(Path.of("/" + entry));
+        Path directory = Files.createDirectories(run.resolve("Mediagarrd"));
+        ServiceBackupRunner.archive(tar(
             dir("db/"),
             file("db/mediagarrd.db", "LIVE COPY"),
             file("db/mediagarrd.db-journal", "stale journal"),
             file("db/mediagarrd.db-wal", "wal"),
             file("db/mediagarrd.db-shm", "shm"),
-            file("db/notes.txt", "keep")));
-        part(run, "0radarr", 0, "/srv/mediagarrd/db/mediagarrd.db", tar(file("mediagarrd.db", "LIVE COPY 2")));
+            file("db/notes.txt", "keep")), "/srv/mediagarrd/db", directory.resolve("0.part"), new ZipCompression(1), excluded, java.util.Set.of());
 
-        var snapshot = new DatabaseSnapshotService(db, hostPaths).snapshot(run);
+        var snapshot = new DatabaseSnapshotService(db, hostPaths, new ZipCompression(1)).snapshot(run);
         BackupArchive archive = service.createArchive(run);
 
         assertEquals(COMPLETED, snapshot.status());
@@ -324,6 +334,84 @@ class BackupArchiveServiceTest {
     }
 
     @Test
+    void aLiveDatabaseCopyThatSlippedPastTheExclusionFailsTheMerge() throws Exception {
+        DatabaseHostPathResolver hostPaths = mock(DatabaseHostPathResolver.class);
+        when(hostPaths.resolve(db.databaseFile())).thenReturn(Path.of("/srv/mediagarrd/db/mediagarrd.db"));
+        Path run = service.createRunDirectory();
+        part(run, "Mediagarrd", 0, "/srv/mediagarrd/db", tar(dir("db/"), file("db/mediagarrd.db-wal", "wal")));
+        new DatabaseSnapshotService(db, hostPaths, new ZipCompression(1)).snapshot(run);
+
+        assertThrows(IllegalStateException.class, () -> service.createArchive(run));
+
+        try (var files = Files.list(service.rootDirectory())) {
+            assertEquals(List.of("runs"), files.map(path -> path.getFileName().toString()).toList());
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void carriesAChecksumOfTheFinalFileComputedWhileWriting() throws Exception {
+        Path run = service.createRunDirectory();
+        part(run, "radarr", 0, "/srv/radarr", tar(file("radarr", "x".repeat(100_000))));
+        part(run, "plex", 0, "/srv/plex/movie.mkv", tar(file("movie.mkv", "y".repeat(50_000))));
+
+        BackupArchive archive = service.createArchive(run);
+
+        byte[] expected = java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(archive.path()));
+        assertEquals(java.util.HexFormat.of().formatHex(expected), archive.checksum());
+        assertEquals(archive.checksum(), archive.resolvedChecksum());
+        assertEquals(Files.size(archive.path()), archive.sizeBytes());
+        assertFalse(Files.exists(archive.path().resolveSibling(archive.fileName() + ".tmp")));
+    }
+
+    @Test
+    @Timeout(30)
+    void storesTheChecksumFromWritingInTheBackupRecord() throws Exception {
+        BackupArchive archive = createArchive();
+
+        byte[] expected = java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(archive.path()));
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + tempDir.resolve("mediagarrd.db"));
+            var statement = connection.createStatement();
+            var result = statement.executeQuery("SELECT checksum FROM backups")) {
+            assertEquals(java.util.HexFormat.of().formatHex(expected), result.getString(1));
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void mergesPartsWithMixedStoredAndDeflatedEntries() throws Exception {
+        String text = "compressible text ".repeat(2000);
+        Path run = service.createRunDirectory();
+        partWith(run, "stored", 0, "/srv/stored", tar(dir("stored/"), file("stored/a.txt", text)), 0);
+        partWith(run, "mixed", 0, "/srv/mixed", tar(file("mixed/b.txt", text), file("mixed/c.mkv", text)), 9);
+        partWith(run, "fast", 0, "/srv/fast", tar(file("fast/d.txt", text)), 1);
+
+        BackupArchive archive = service.createArchive(run);
+
+        assertEquals(text, contents(archive.path()).get("srv/stored/a.txt"));
+        assertEquals(text, contents(archive.path()).get("srv/mixed/b.txt"));
+        assertEquals(text, contents(archive.path()).get("srv/mixed/c.mkv"));
+        assertEquals(text, contents(archive.path()).get("srv/fast/d.txt"));
+        try (ZipFile zip = ZipFile.builder().setPath(archive.path()).get()) {
+            assertEquals(java.util.zip.ZipEntry.STORED, zip.getEntry("srv/stored/a.txt").getMethod());
+            assertEquals(java.util.zip.ZipEntry.DEFLATED, zip.getEntry("srv/mixed/b.txt").getMethod());
+            assertEquals(java.util.zip.ZipEntry.STORED, zip.getEntry("srv/mixed/c.mkv").getMethod());
+            assertEquals(java.util.zip.ZipEntry.DEFLATED, zip.getEntry("srv/fast/d.txt").getMethod());
+            for (ZipArchiveEntry entry : java.util.Collections.list(zip.getEntries())) {
+                assertFalse(entry.getGeneralPurposeBit().usesDataDescriptor(), entry.getName());
+            }
+        }
+        java.util.Map<String, String> streamed = new java.util.TreeMap<>();
+        try (var in = new org.apache.commons.compress.archivers.zip.ZipArchiveInputStream(Files.newInputStream(archive.path()))) {
+            ZipArchiveEntry entry;
+            while ((entry = in.getNextEntry()) != null) {
+                streamed.put(entry.getName(), new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+            }
+        }
+        assertEquals(contents(archive.path()), streamed);
+    }
+
+    @Test
     void archivesWithoutASnapshotPartStillMerge() throws Exception {
         Path run = service.createRunDirectory();
         part(run, "radarr", 0, "/srv/radarr", tar(file("radarr", "x")));
@@ -333,9 +421,14 @@ class BackupArchiveServiceTest {
         assertEquals(List.of("srv/radarr"), List.copyOf(contents(archive.path()).keySet()));
     }
 
+    private static void partWith(Path run, String service, int index, String hostPath, java.io.InputStream tar, int level) throws Exception {
+        Path directory = Files.createDirectories(run.resolve(service));
+        ServiceBackupRunner.archive(tar, hostPath, directory.resolve(index + ServiceBackupRunner.PART_SUFFIX), new ZipCompression(level));
+    }
+
     private static void part(Path run, String service, int index, String hostPath, java.io.InputStream tar) throws Exception {
         Path directory = Files.createDirectories(run.resolve(service));
-        ServiceBackupRunner.archive(tar, hostPath, directory.resolve(index + ServiceBackupRunner.PART_SUFFIX));
+        ServiceBackupRunner.archive(tar, hostPath, directory.resolve(index + ServiceBackupRunner.PART_SUFFIX), new ZipCompression(1));
     }
 
     private BackupArchive createArchive() throws Exception {

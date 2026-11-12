@@ -16,6 +16,7 @@ public class MediaGarrdProperties {
     private String backupRoot = "/var/lib/mediagarrd/backups";
     private int retentionCount = 10;
     private String databasePath = "/var/lib/mediagarrd/db/mediagarrd.db";
+    private int compressionLevel = 1;
     private String helperImage = "busybox:stable";
     private String updateRepository = "MediaGarrd/Server";
     private String githubApiBaseUrl = "https://api.github.com";

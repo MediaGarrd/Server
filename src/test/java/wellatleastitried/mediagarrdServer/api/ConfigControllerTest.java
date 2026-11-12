@@ -36,6 +36,7 @@ import wellatleastitried.mediagarrdServer.service.BackupArchiveService;
 import wellatleastitried.mediagarrdServer.service.BackupOrchestratorService;
 import wellatleastitried.mediagarrdServer.service.DatabaseService;
 import wellatleastitried.mediagarrdServer.service.DockerService;
+import wellatleastitried.mediagarrdServer.service.RunStatusBroadcaster;
 import wellatleastitried.mediagarrdServer.service.SetupService;
 
 @WebMvcTest(ConfigController.class)
@@ -57,6 +58,9 @@ class ConfigControllerTest {
 
     @MockBean
     DockerService docker;
+
+    @MockBean
+    RunStatusBroadcaster broadcaster;
 
     @MockBean
     SetupService setup;
@@ -86,6 +90,8 @@ class ConfigControllerTest {
         verify(db, never()).addService(any());
         verify(db, never()).removeService(anyString());
         verify(archiveService, never()).updateSettings(any(), any());
+        verify(broadcaster, never()).publishConfigChanged();
+        verify(broadcaster, never()).publishBackupsChanged();
     }
 
     @Test
@@ -126,6 +132,8 @@ class ConfigControllerTest {
             .andExpect(jsonPath("$.retentionCount").value(4));
 
         verify(archiveService).updateSettings("/new", 4);
+        verify(broadcaster).publishBackupsChanged();
+        verify(broadcaster).publishConfigChanged();
     }
 
     @Test
@@ -136,6 +144,8 @@ class ConfigControllerTest {
             .andExpect(status().isOk());
 
         verify(archiveService).updateSettings(isNull(), eq(4));
+        verify(broadcaster, never()).publishBackupsChanged();
+        verify(broadcaster).publishConfigChanged();
     }
 
     @Test
@@ -168,6 +178,8 @@ class ConfigControllerTest {
             .andExpect(jsonPath("$.paths", hasSize(1)));
 
         verify(db).addService(RADARR);
+        verify(orchestrator).servicesChanged();
+        verify(broadcaster).publishConfigChanged();
     }
 
     @Test
@@ -179,6 +191,8 @@ class ConfigControllerTest {
             .andExpect(jsonPath("$.error").exists());
 
         verify(db, never()).addService(any());
+        verify(orchestrator, never()).servicesChanged();
+        verify(broadcaster, never()).publishConfigChanged();
     }
 
     @Test
@@ -199,7 +213,9 @@ class ConfigControllerTest {
             .andExpect(jsonPath("$.paths[0]").value("/srv/other"));
 
         verify(db).updateService("radarr", new ServiceDefinition("radarr", List.of("/srv/other")));
+        verify(orchestrator).servicesChanged();
         verify(docker, never()).removeContainers(anyString());
+        verify(broadcaster).publishConfigChanged();
     }
 
     @Test
@@ -223,6 +239,8 @@ class ConfigControllerTest {
             .andExpect(status().isConflict());
 
         verify(db, never()).updateService(anyString(), any());
+        verify(orchestrator, never()).servicesChanged();
+        verify(broadcaster, never()).publishConfigChanged();
     }
 
     @Test
@@ -231,6 +249,8 @@ class ConfigControllerTest {
 
         mockMvc.perform(json(put("/api/v1/services/radarr"), RADARR_JSON))
             .andExpect(status().isNotFound());
+
+        verify(orchestrator, never()).servicesChanged();
     }
 
     @Test
@@ -242,6 +262,7 @@ class ConfigControllerTest {
 
         verify(db).removeService("radarr");
         verify(docker).removeContainers("radarr");
+        verify(broadcaster).publishConfigChanged();
     }
 
     @Test

@@ -6,6 +6,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
@@ -22,6 +23,7 @@ public class BackupScheduleService {
     private final DatabaseService db;
     private final AtomicReference<Duration> currentInterval;
     private final AtomicReference<Instant> nextRun;
+    private final AtomicBoolean deferred = new AtomicBoolean();
 
     public BackupScheduleService(MediaGarrdProperties properties, DatabaseService db) {
         this.db = db;
@@ -47,6 +49,7 @@ public class BackupScheduleService {
         currentInterval.set(safe);
         Instant next = Instant.now().plus(safe);
         nextRun.set(next);
+        deferred.set(false);
         LOGGER.info("Backup interval updated: newInterval={}, nextRunAt={}", safe, next);
         return safe;
     }
@@ -60,7 +63,22 @@ public class BackupScheduleService {
     public void markRunStarted() {
         Instant next = Instant.now().plus(currentInterval.get());
         nextRun.set(next);
+        deferred.set(false);
         LOGGER.info("Backup run started: nextScheduledRun={}", next);
+    }
+
+    public void deferNextRun() {
+        Instant next = Instant.now().plus(currentInterval.get());
+        nextRun.set(next);
+        deferred.set(true);
+        LOGGER.info("Nothing to back up yet, next scheduled check at {}", next);
+    }
+
+    public void releaseDeferral() {
+        if (deferred.compareAndSet(true, false)) {
+            nextRun.set(Instant.now());
+            LOGGER.info("Services are configured, the next scheduled backup is due now");
+        }
     }
 
     private static Optional<Duration> parse(String stored) {

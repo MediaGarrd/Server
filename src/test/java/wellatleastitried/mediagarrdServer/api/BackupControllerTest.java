@@ -22,6 +22,7 @@ import wellatleastitried.mediagarrdServer.model.BackupArchive;
 import wellatleastitried.mediagarrdServer.model.BackupRunResult;
 import wellatleastitried.mediagarrdServer.service.BackupArchiveService;
 import wellatleastitried.mediagarrdServer.service.BackupOrchestratorService;
+import wellatleastitried.mediagarrdServer.service.RunStatusBroadcaster;
 import wellatleastitried.mediagarrdServer.service.SetupService;
 
 @WebMvcTest(BackupController.class)
@@ -34,6 +35,9 @@ class BackupControllerTest {
 
     @MockBean
     BackupOrchestratorService orchestratorService;
+
+    @MockBean
+    RunStatusBroadcaster broadcaster;
 
     @MockBean
     SetupService setup;
@@ -106,5 +110,37 @@ class BackupControllerTest {
         mockMvc.perform(post("/api/v1/backups/run"))
             .andExpect(status().isInternalServerError())
             .andExpect(jsonPath("$.error").value("Every service failed, no archive created: radarr: boom"));
+    }
+
+    @Test
+    void deletingABackupPublishesBackupsChanged() throws Exception {
+        when(archiveService.deleteById("backup-1")).thenReturn(true);
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete("/api/v1/backups/backup-1"))
+            .andExpect(status().isNoContent());
+
+        org.mockito.Mockito.verify(broadcaster).publishBackupsChanged();
+    }
+
+    @Test
+    void deletingAMissingBackupPublishesNothing() throws Exception {
+        when(archiveService.deleteById("nope")).thenReturn(false);
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete("/api/v1/backups/nope"))
+            .andExpect(status().isNotFound());
+
+        org.mockito.Mockito.verify(broadcaster, org.mockito.Mockito.never()).publishBackupsChanged();
+    }
+
+    @Test
+    void updatingTheSchedulePublishesConfigChanged() throws Exception {
+        when(orchestratorService.updateInterval(Duration.ofHours(2))).thenReturn(Duration.ofHours(2));
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put("/api/v1/schedule")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"backupInterval\": \"PT2H\"}"))
+            .andExpect(status().isOk());
+
+        org.mockito.Mockito.verify(broadcaster).publishConfigChanged();
     }
 }

@@ -25,6 +25,7 @@ import wellatleastitried.mediagarrdServer.service.BackupArchiveService;
 import wellatleastitried.mediagarrdServer.service.BackupOrchestratorService;
 import wellatleastitried.mediagarrdServer.service.DatabaseService;
 import wellatleastitried.mediagarrdServer.service.DockerService;
+import wellatleastitried.mediagarrdServer.service.RunStatusBroadcaster;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -36,17 +37,20 @@ public class ConfigController {
     private final BackupOrchestratorService orchestrator;
     private final DatabaseService db;
     private final DockerService docker;
+    private final RunStatusBroadcaster broadcaster;
 
     public ConfigController(
         BackupArchiveService archiveService,
         BackupOrchestratorService orchestrator,
         DatabaseService db,
-        DockerService docker
+        DockerService docker,
+        RunStatusBroadcaster broadcaster
     ) {
         this.archiveService = archiveService;
         this.orchestrator = orchestrator;
         this.db = db;
         this.docker = docker;
+        this.broadcaster = broadcaster;
     }
 
     @GetMapping("/config")
@@ -60,6 +64,10 @@ public class ConfigController {
         LOGGER.info("PUT /api/v1/config, backupLocation={}, retentionCount={}", request.backupLocation(), request.retentionCount());
         return orchestrator.whileIdle(() -> {
             archiveService.updateSettings(request.backupLocation(), request.retentionCount());
+            if (request.backupLocation() != null) {
+                broadcaster.publishBackupsChanged();
+            }
+            broadcaster.publishConfigChanged();
             return currentConfig();
         });
     }
@@ -79,6 +87,8 @@ public class ConfigController {
                 return error(HttpStatus.CONFLICT, "Service already exists: " + service.name());
             }
             db.addService(service);
+            orchestrator.servicesChanged();
+            broadcaster.publishConfigChanged();
             return ResponseEntity.status(HttpStatus.CREATED).body(service);
         });
     }
@@ -100,6 +110,8 @@ public class ConfigController {
             if (!service.name().equals(currentName)) {
                 docker.removeContainers(currentName);
             }
+            orchestrator.servicesChanged();
+            broadcaster.publishConfigChanged();
             return ResponseEntity.ok(service);
         });
     }
@@ -114,6 +126,7 @@ public class ConfigController {
             }
             db.removeService(existing.get().name());
             docker.removeContainers(existing.get().name());
+            broadcaster.publishConfigChanged();
             return ResponseEntity.noContent().build();
         });
     }

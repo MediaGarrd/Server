@@ -32,6 +32,7 @@ import wellatleastitried.mediagarrdServer.model.BackupArchive;
 import wellatleastitried.mediagarrdServer.model.BackupRunResult;
 import wellatleastitried.mediagarrdServer.service.BackupArchiveService;
 import wellatleastitried.mediagarrdServer.service.BackupOrchestratorService;
+import wellatleastitried.mediagarrdServer.service.RunStatusBroadcaster;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -41,15 +42,17 @@ public class BackupController {
 
     private final BackupArchiveService archiveService;
     private final BackupOrchestratorService orchestratorService;
+    private final RunStatusBroadcaster broadcaster;
 
-    public BackupController(BackupArchiveService archiveService, BackupOrchestratorService orchestratorService) {
+    public BackupController(BackupArchiveService archiveService, BackupOrchestratorService orchestratorService, RunStatusBroadcaster broadcaster) {
         this.archiveService = archiveService;
         this.orchestratorService = orchestratorService;
+        this.broadcaster = broadcaster;
     }
 
     @GetMapping("/health")
     public ServerStatusDto health() {
-        LOGGER.info("GET /api/v1/health, running={}, interval={}", orchestratorService.isRunning(), orchestratorService.getInterval());
+        LOGGER.debug("GET /api/v1/health, running={}, interval={}", orchestratorService.isRunning(), orchestratorService.getInterval());
         return status(orchestratorService.getInterval());
     }
 
@@ -58,14 +61,15 @@ public class BackupController {
         LOGGER.info("PUT /api/v1/schedule, requestedInterval={}", request.backupInterval());
         Duration updated = orchestratorService.updateInterval(request.backupInterval());
         LOGGER.info("Schedule updated: newInterval={}", updated);
+        broadcaster.publishConfigChanged();
         return status(updated);
     }
 
     @GetMapping("/backups")
     public List<BackupDto> listBackups() {
-        LOGGER.info("GET /api/v1/backups");
+        LOGGER.debug("GET /api/v1/backups");
         List<BackupDto> backups = archiveService.listArchives().stream().map(this::toDto).toList();
-        LOGGER.info("Returning {} backup(s)", backups.size());
+        LOGGER.debug("Returning {} backup(s)", backups.size());
         return backups;
     }
 
@@ -111,6 +115,7 @@ public class BackupController {
             return ResponseEntity.notFound().build();
         }
         LOGGER.info("Backup deleted: {}", id);
+        broadcaster.publishBackupsChanged();
         return ResponseEntity.noContent().build();
     }
 

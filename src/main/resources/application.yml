@@ -1,9 +1,18 @@
 server:
   port: ${SERVER_PORT:8080}
 
+spring:
+  task:
+    scheduling:
+      pool:
+        size: 2
+
 mediagarrd:
   backup-interval: ${MEDIAGARRD_BACKUP_INTERVAL:PT12H}
   backup-root: ${MEDIAGARRD_BACKUP_ROOT:/var/lib/mediagarrd/backups}
   retention-count: ${MEDIAGARRD_RETENTION_COUNT:10}
   database-path: ${MEDIAGARRD_DATABASE_PATH:/var/lib/mediagarrd/db/mediagarrd.db}
   helper-image: ${MEDIAGARRD_HELPER_IMAGE:busybox:stable}
+  update-repository: ${MEDIAGARRD_UPDATE_REPOSITORY:MediaGarrd/Server}
+  github-api-base-url: ${MEDIAGARRD_GITHUB_API_URL:https://api.github.com}
+  update-check-interval: ${MEDIAGARRD_UPDATE_CHECK_INTERVAL:PT24H}

@@ -12,6 +12,7 @@ mediagarrd:
   backup-root: ${MEDIAGARRD_BACKUP_ROOT:/var/lib/mediagarrd/backups}
   retention-count: ${MEDIAGARRD_RETENTION_COUNT:10}
   database-path: ${MEDIAGARRD_DATABASE_PATH:/var/lib/mediagarrd/db/mediagarrd.db}
+  compression-level: ${MEDIAGARRD_COMPRESSION_LEVEL:1}
   helper-image: ${MEDIAGARRD_HELPER_IMAGE:busybox:stable}
   update-repository: ${MEDIAGARRD_UPDATE_REPOSITORY:MediaGarrd/Server}
   github-api-base-url: ${MEDIAGARRD_GITHUB_API_URL:https://api.github.com}

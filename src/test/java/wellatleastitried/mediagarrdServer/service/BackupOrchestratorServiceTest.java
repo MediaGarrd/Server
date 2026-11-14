@@ -21,6 +21,7 @@ import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseUtil
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -59,7 +60,7 @@ class BackupOrchestratorServiceTest {
     void setUp() {
         when(archives.createRunDirectory()).thenReturn(RUN_DIR);
         when(archives.createArchive(RUN_DIR)).thenReturn(ARCHIVE);
-        when(snapshots.snapshot(RUN_DIR)).thenReturn(snapshotResult(COMPLETED));
+        when(snapshots.snapshotWithHostPath(RUN_DIR)).thenReturn(snapshotOutcome(COMPLETED));
     }
 
     @AfterEach
@@ -110,10 +111,10 @@ class BackupOrchestratorServiceTest {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         when(db.fetchServices()).thenReturn(List.of(RADARR));
-        when(runner.run(eq(RADARR), any())).thenAnswer(invocation -> {
+        when(runner.copyPaths(eq(RADARR), any(), any(), any(), any())).thenAnswer(invocation -> {
             started.countDown();
             release.await();
-            return result("radarr", COMPLETED);
+            return round(RADARR, COMPLETED);
         });
         when(schedule.dueNow()).thenReturn(true);
 
@@ -161,7 +162,7 @@ class BackupOrchestratorServiceTest {
     @Test
     void partialWhenOnlyTheDatabaseSnapshotFails() {
         givenResults(COMPLETED, COMPLETED);
-        when(snapshots.snapshot(RUN_DIR)).thenReturn(snapshotResult(FAILED));
+        when(snapshots.snapshotWithHostPath(RUN_DIR)).thenReturn(snapshotOutcome(FAILED));
 
         BackupRunResult result = orchestrator.runBackup();
 
@@ -175,7 +176,7 @@ class BackupOrchestratorServiceTest {
     @Test
     void snapshotFailureIsAddedToTheServiceErrors() {
         givenResults(COMPLETED, FAILED);
-        when(snapshots.snapshot(RUN_DIR)).thenReturn(snapshotResult(FAILED));
+        when(snapshots.snapshotWithHostPath(RUN_DIR)).thenReturn(snapshotOutcome(FAILED));
 
         BackupRunResult result = orchestrator.runBackup();
 
@@ -186,7 +187,7 @@ class BackupOrchestratorServiceTest {
     @Test
     void aThrowingSnapshotStillProducesAPartialArchive() {
         givenResults(COMPLETED, COMPLETED);
-        when(snapshots.snapshot(RUN_DIR)).thenThrow(new IllegalStateException("docker down"));
+        when(snapshots.snapshotWithHostPath(RUN_DIR)).thenThrow(new IllegalStateException("docker down"));
 
         BackupRunResult result = orchestrator.runBackup();
 
@@ -197,13 +198,14 @@ class BackupOrchestratorServiceTest {
     }
 
     @Test
-    void snapshotRunsBeforeTheArchiveIsCreated() {
+    void snapshotRunsBeforeTheCopiesAndTheArchiveIsCreatedLast() {
         givenResults(COMPLETED, COMPLETED);
 
         orchestrator.runBackup();
 
-        var order = inOrder(snapshots, archives);
-        order.verify(snapshots).snapshot(RUN_DIR);
+        var order = inOrder(snapshots, runner, archives);
+        order.verify(snapshots).snapshotWithHostPath(RUN_DIR);
+        order.verify(runner, org.mockito.Mockito.atLeastOnce()).copyPaths(any(), any(), eq(RUN_DIR), any(), any());
         order.verify(archives).createArchive(RUN_DIR);
     }
 
@@ -222,7 +224,6 @@ class BackupOrchestratorServiceTest {
 
         assertTrue(e.getMessage().contains("radarr: boom\nsonarr: boom"));
         verify(archives, never()).createArchive(any());
-        verify(snapshots, never()).snapshot(any());
         verify(archives).removeRunDirectory(RUN_DIR);
         assertFalse(orchestrator.isRunning());
 
@@ -238,8 +239,8 @@ class BackupOrchestratorServiceTest {
     @Test
     void runnerExceptionsBecomeFailedResults() {
         when(db.fetchServices()).thenReturn(List.of(RADARR, SONARR));
-        when(runner.run(RADARR, RUN_DIR)).thenThrow(new IllegalStateException("crashed"));
-        when(runner.run(SONARR, RUN_DIR)).thenReturn(result("sonarr", COMPLETED));
+        when(runner.copyPaths(eq(RADARR), any(), eq(RUN_DIR), any(), any())).thenThrow(new IllegalStateException("crashed"));
+        when(runner.copyPaths(eq(SONARR), any(), eq(RUN_DIR), any(), any())).thenReturn(round(SONARR, COMPLETED));
 
         BackupRunResult result = orchestrator.runBackup();
 
@@ -264,10 +265,10 @@ class BackupOrchestratorServiceTest {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         when(db.fetchServices()).thenReturn(List.of(RADARR));
-        when(runner.run(eq(RADARR), any())).thenAnswer(invocation -> {
+        when(runner.copyPaths(eq(RADARR), any(), any(), any(), any())).thenAnswer(invocation -> {
             started.countDown();
             release.await();
-            return result("radarr", COMPLETED);
+            return round(RADARR, COMPLETED);
         });
 
         CompletableFuture<BackupRunResult> first = CompletableFuture.supplyAsync(orchestrator::runBackup);
@@ -291,10 +292,10 @@ class BackupOrchestratorServiceTest {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         when(db.fetchServices()).thenReturn(List.of(RADARR));
-        when(runner.run(eq(RADARR), any())).thenAnswer(invocation -> {
+        when(runner.copyPaths(eq(RADARR), any(), any(), any(), any())).thenAnswer(invocation -> {
             started.countDown();
             release.await();
-            return result("radarr", COMPLETED);
+            return round(RADARR, COMPLETED);
         });
 
         CompletableFuture<BackupRunResult> run = CompletableFuture.supplyAsync(orchestrator::runBackup);
@@ -343,7 +344,7 @@ class BackupOrchestratorServiceTest {
         var order = inOrder(broadcaster, runner, db);
         order.verify(db).fetchServices();
         order.verify(broadcaster).publishStarted(any());
-        order.verify(runner, org.mockito.Mockito.atLeastOnce()).run(any(), any());
+        order.verify(runner, org.mockito.Mockito.atLeastOnce()).copyPaths(any(), any(), any(), any(), any());
         order.verify(broadcaster).publishFinished(eq(COMPLETED), any(), any());
         verify(broadcaster, org.mockito.Mockito.times(1)).publishStarted(any());
         verify(broadcaster, org.mockito.Mockito.times(1)).publishFinished(any(), any(), any());
@@ -455,10 +456,10 @@ class BackupOrchestratorServiceTest {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         when(db.fetchServices()).thenReturn(List.of(RADARR));
-        when(runner.run(eq(RADARR), any())).thenAnswer(invocation -> {
+        when(runner.copyPaths(eq(RADARR), any(), any(), any(), any())).thenAnswer(invocation -> {
             started.countDown();
             release.await();
-            return result("radarr", COMPLETED);
+            return round(RADARR, COMPLETED);
         });
 
         CompletableFuture<BackupRunResult> first = CompletableFuture.supplyAsync(orchestrator::runBackup);
@@ -503,12 +504,22 @@ class BackupOrchestratorServiceTest {
 
     private void givenResults(String radarrStatus, String sonarrStatus) {
         when(db.fetchServices()).thenReturn(List.of(RADARR, SONARR));
-        when(runner.run(RADARR, RUN_DIR)).thenReturn(result("radarr", radarrStatus));
-        when(runner.run(SONARR, RUN_DIR)).thenReturn(result("sonarr", sonarrStatus));
+        when(runner.copyPaths(eq(RADARR), any(), eq(RUN_DIR), any(), any())).thenReturn(round(RADARR, radarrStatus));
+        when(runner.copyPaths(eq(SONARR), any(), eq(RUN_DIR), any(), any())).thenReturn(round(SONARR, sonarrStatus));
     }
 
-    private static BackupServiceResult snapshotResult(String status) {
-        return result(SNAPSHOT, status);
+    private static DatabaseSnapshotService.Outcome snapshotOutcome(String status) {
+        return new DatabaseSnapshotService.Outcome(result(SNAPSHOT, status), Path.of("/srv/mediagarrd/db/mediagarrd.db"));
+    }
+
+    private static ServiceBackupRunner.ServiceRound round(ServiceDefinition service, String status) {
+        String path = service.paths().get(0);
+        return switch (status) {
+            case COMPLETED -> new ServiceBackupRunner.ServiceRound(null, List.of(new ServiceBackupRunner.PathCopy(0, path, true, null, Set.of())));
+            case PARTIAL -> new ServiceBackupRunner.ServiceRound(null, List.of(
+                new ServiceBackupRunner.PathCopy(0, path, true, null, Set.of()), new ServiceBackupRunner.PathCopy(1, path, false, "boom", Set.of())));
+            default -> new ServiceBackupRunner.ServiceRound(null, List.of(new ServiceBackupRunner.PathCopy(0, path, false, "boom", Set.of())));
+        };
     }
 
     private static BackupServiceResult result(String name, String status) {

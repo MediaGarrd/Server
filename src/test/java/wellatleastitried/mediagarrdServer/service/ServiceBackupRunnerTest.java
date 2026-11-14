@@ -19,12 +19,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 import java.util.stream.Stream;
+import java.util.zip.CRC32;
+import java.util.zip.ZipEntry;
 
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
@@ -34,10 +34,12 @@ import org.apache.commons.compress.archivers.zip.X7875_NewUnix;
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipFile;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import wellatleastitried.mediagarrdServer.model.BackupServiceResult;
 import wellatleastitried.mediagarrdServer.model.ServiceDefinition;
@@ -50,7 +52,7 @@ class ServiceBackupRunnerTest {
     Path runDir;
 
     private final DockerService docker = mock(DockerService.class);
-    private final ServiceBackupRunner runner = new ServiceBackupRunner(docker);
+    private final ServiceBackupRunner runner = new ServiceBackupRunner(docker, new ZipCompression(1));
 
     @Test
     void storesDirectoryContentsUnderTheirAbsolutePaths() throws Exception {
@@ -63,11 +65,11 @@ class ServiceBackupRunnerTest {
 
         assertEquals(COMPLETED, result.status());
         assertNull(result.errorMessage());
-        Map<String, String> config = contents(runDir.resolve("radarr/0.zip"));
+        Map<String, String> config = contents(runDir.resolve("radarr/0.part"));
         assertEquals(List.of("srv/radarr/config/", "srv/radarr/config/config.xml", "srv/radarr/config/empty/", "srv/radarr/config/logs/app.log"),
             List.copyOf(config.keySet()));
         assertEquals("<xml/>", config.get("srv/radarr/config/config.xml"));
-        assertEquals("db", contents(runDir.resolve("radarr/1.zip")).get("srv/radarr/data/radarr.db"));
+        assertEquals("db", contents(runDir.resolve("radarr/1.part")).get("srv/radarr/data/radarr.db"));
     }
 
     @Test
@@ -78,7 +80,7 @@ class ServiceBackupRunnerTest {
 
         assertEquals(COMPLETED, runner.run(nginx, runDir).status());
 
-        assertEquals(Map.of("etc/nginx/sites-available/config", "server {}"), contents(runDir.resolve("nginx/0.zip")));
+        assertEquals(Map.of("etc/nginx/sites-available/config", "server {}"), contents(runDir.resolve("nginx/0.part")));
     }
 
     static Stream<Arguments> archivedEntries() {
@@ -99,7 +101,7 @@ class ServiceBackupRunnerTest {
     void archivesExpectedEntries(String description, String hostPath, Item[] items, Map<String, String> expected) throws Exception {
         Path part = runDir.resolve("part.zip");
 
-        assertEquals(expected.size(), ServiceBackupRunner.archive(tar(items), hostPath, part));
+        assertEquals(expected.size(), ServiceBackupRunner.archive(tar(items), hostPath, part, new ZipCompression(1)));
 
         assertEquals(expected, contents(part));
     }
@@ -111,16 +113,16 @@ class ServiceBackupRunnerTest {
         secret.entry().setMode(0100600);
         secret.entry().setUserId(1000);
         secret.entry().setGroupId(1001);
-        secret.entry().setModTime(new Date(1_700_000_000_000L));
+        secret.entry().setModTime(new Date(1_700_000_001_000L));
         Item folder = dir("config/");
         folder.entry().setMode(040750);
 
-        ServiceBackupRunner.archive(tar(folder, secret), "/home/user/config", part);
+        ServiceBackupRunner.archive(tar(folder, secret), "/home/user/config", part, new ZipCompression(1));
 
-        try (ZipFile zip = ZipFile.builder().setPath(part).get()) {
+        try (ZipFile zip = ZipFile.builder().setPath(merged(part)).get()) {
             ZipArchiveEntry key = zip.getEntry("home/user/config/id_rsa");
             assertEquals(UnixStat.FILE_FLAG | 0600, key.getUnixMode());
-            assertEquals(1_700_000_000_000L, key.getTime());
+            assertEquals(1_700_000_001_000L, key.getTime());
             X7875_NewUnix owner = (X7875_NewUnix) key.getExtraField(new X7875_NewUnix().getHeaderId());
             assertEquals(1000, owner.getUID());
             assertEquals(1001, owner.getGID());
@@ -128,14 +130,96 @@ class ServiceBackupRunnerTest {
         }
     }
 
+    @ParameterizedTest(name = "level {0}")
+    @ValueSource(ints = {0, 1, 9})
+    @Timeout(30)
+    void picksEntryMethodsByLevelAndExtensionAndRoundTripsContents(int level) throws Exception {
+        Path part = runDir.resolve("part.zip");
+        String text = "compressible text ".repeat(2000);
+        Item notes = file("data/notes.txt", text);
+        notes.entry().setMode(0100640);
+        notes.entry().setUserId(1000);
+        notes.entry().setGroupId(1001);
+        notes.entry().setModTime(new Date(1_700_000_000_000L));
+        Item movie = file("data/movie.MKV", text);
+        movie.entry().setMode(0100600);
+        movie.entry().setUserId(7);
+        movie.entry().setGroupId(8);
+
+        ServiceBackupRunner.archive(tar(dir("data/"), notes, movie, file("data/empty.txt", "")), "/srv/data", part, new ZipCompression(level));
+
+        assertEquals(text, contents(part).get("srv/data/notes.txt"));
+        assertEquals(text, contents(part).get("srv/data/movie.MKV"));
+        assertEquals("", contents(part).get("srv/data/empty.txt"));
+        CRC32 crc = new CRC32();
+        crc.update(text.getBytes(StandardCharsets.UTF_8));
+        try (ZipFile zip = ZipFile.builder().setPath(merged(part)).get()) {
+            ZipArchiveEntry stored = zip.getEntry("srv/data/movie.MKV");
+            assertEquals(ZipEntry.STORED, stored.getMethod());
+            assertEquals(text.length(), stored.getSize());
+            assertEquals(text.length(), stored.getCompressedSize());
+            assertEquals(crc.getValue(), stored.getCrc());
+            assertEquals(UnixStat.FILE_FLAG | 0600, stored.getUnixMode());
+            X7875_NewUnix owner = (X7875_NewUnix) stored.getExtraField(new X7875_NewUnix().getHeaderId());
+            assertEquals(7, owner.getUID());
+            assertEquals(8, owner.getGID());
+
+            ZipArchiveEntry notesEntry = zip.getEntry("srv/data/notes.txt");
+            assertEquals(level == 0 ? ZipEntry.STORED : ZipEntry.DEFLATED, notesEntry.getMethod());
+            assertEquals(level == 0, notesEntry.getCompressedSize() == notesEntry.getSize());
+            assertEquals(UnixStat.FILE_FLAG | 0640, notesEntry.getUnixMode());
+            assertEquals(1_700_000_000_000L, notesEntry.getTime());
+            X7875_NewUnix notesOwner = (X7875_NewUnix) notesEntry.getExtraField(new X7875_NewUnix().getHeaderId());
+            assertEquals(1000, notesOwner.getUID());
+            assertEquals(1001, notesOwner.getGID());
+            assertEquals(UnixStat.DIR_FLAG | 0755, zip.getEntry("srv/data/").getUnixMode());
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void higherLevelsProduceSmallerPartsForCompressibleData() throws Exception {
+        String text = "compressible text ".repeat(20000);
+        Path none = runDir.resolve("none.zip");
+        Path fast = runDir.resolve("fast.zip");
+        Path best = runDir.resolve("best.zip");
+
+        ServiceBackupRunner.archive(tar(file("f/a.txt", text)), "/srv/f", none, new ZipCompression(0));
+        ServiceBackupRunner.archive(tar(file("f/a.txt", text)), "/srv/f", fast, new ZipCompression(1));
+        ServiceBackupRunner.archive(tar(file("f/a.txt", text)), "/srv/f", best, new ZipCompression(9));
+
+        assertTrue(Files.size(none) > text.length());
+        assertTrue(Files.size(fast) < text.length() / 10);
+        assertTrue(Files.size(best) <= Files.size(fast));
+    }
+
+    @Test
+    @Timeout(30)
+    void hardLinksToStoredAndDeflatedEntriesKeepTheirMethods() throws Exception {
+        Path part = runDir.resolve("part.zip");
+        Item stored = file("data/clip.mp4", "video".repeat(500));
+        Item deflated = file("data/log.txt", "text".repeat(500));
+        Item linkStored = link("data/clip-link.mp4", TarConstants.LF_LINK, "data/clip.mp4");
+        Item linkDeflated = link("data/log-link.txt", TarConstants.LF_LINK, "data/log.txt");
+
+        ServiceBackupRunner.archive(tar(dir("data/"), stored, deflated, linkStored, linkDeflated), "/srv/data", part, new ZipCompression(1));
+
+        try (ZipFile zip = ZipFile.builder().setPath(merged(part)).get()) {
+            assertEquals(ZipEntry.STORED, zip.getEntry("srv/data/clip-link.mp4").getMethod());
+            assertEquals(ZipEntry.DEFLATED, zip.getEntry("srv/data/log-link.txt").getMethod());
+        }
+        assertEquals("video".repeat(500), contents(part).get("srv/data/clip-link.mp4"));
+        assertEquals("text".repeat(500), contents(part).get("srv/data/log-link.txt"));
+    }
+
     @Test
     void storesSymbolicLinksAsLinks() throws Exception {
         Path part = runDir.resolve("part.zip");
         Item symlink = link("sites-enabled/default", TarConstants.LF_SYMLINK, "/etc/nginx/sites-available/default");
 
-        ServiceBackupRunner.archive(tar(dir("sites-enabled/"), symlink), "/etc/nginx/sites-enabled", part);
+        ServiceBackupRunner.archive(tar(dir("sites-enabled/"), symlink), "/etc/nginx/sites-enabled", part, new ZipCompression(1));
 
-        try (ZipFile zip = ZipFile.builder().setPath(part).get()) {
+        try (ZipFile zip = ZipFile.builder().setPath(merged(part)).get()) {
             ZipArchiveEntry entry = zip.getEntry("etc/nginx/sites-enabled/default");
             assertTrue(entry.isUnixSymlink());
             assertEquals("/etc/nginx/sites-available/default", zip.getUnixSymlink(entry));
@@ -143,14 +227,65 @@ class ServiceBackupRunnerTest {
     }
 
     @Test
-    void copiesHardLinksIntoALinksPart() throws Exception {
-        Path part = runDir.resolve("0.zip");
+    void storesHardLinksAsRegularCopiesOfTheirTarget() throws Exception {
+        Path part = runDir.resolve("0.part");
         Item hardLink = link("data/link", TarConstants.LF_LINK, "data/original");
 
-        assertEquals(3, ServiceBackupRunner.archive(tar(dir("data/"), file("data/original", "same"), hardLink), "/srv/data", part));
+        assertEquals(3, ServiceBackupRunner.archive(tar(dir("data/"), file("data/original", "same"), hardLink), "/srv/data", part, new ZipCompression(1)));
 
-        assertFalse(contents(part).containsKey("srv/data/link"));
-        assertEquals(Map.of("srv/data/link", "same"), contents(runDir.resolve("0-links.zip")));
+        assertEquals(Map.of("srv/data/", "", "srv/data/original", "same", "srv/data/link", "same"), contents(part));
+    }
+
+    @Test
+    void excludedNamesAndHardLinksToThemAreSkipped() throws Exception {
+        Path part = runDir.resolve("0.part");
+        Item hardLink = link("data/db-link", TarConstants.LF_LINK, "data/live.db");
+
+        ServiceBackupRunner.ArchiveResult result = ServiceBackupRunner.archive(
+            tar(dir("data/"), file("data/live.db", "live"), hardLink, file("data/keep", "k")), "/srv/data", part, new ZipCompression(1),
+            java.util.Set.of("srv/data/live.db"), java.util.Set.of());
+
+        assertEquals(2, result.entries());
+        assertEquals(Map.of("srv/data/", "", "srv/data/keep", "k"), contents(part));
+    }
+
+    @Test
+    void aHardLinkToASkippedSpecialFileIsSkippedInsteadOfFailingThePath() throws Exception {
+        Path part = runDir.resolve("0.part");
+
+        int entries = ServiceBackupRunner.archive(
+            tar(dir("data/"), special("data/pipe", TarConstants.LF_FIFO), link("data/pipe2", TarConstants.LF_LINK, "data/pipe"), file("data/f", "x")),
+            "/srv/data", part, new ZipCompression(1));
+
+        assertEquals(2, entries);
+        assertEquals(Map.of("srv/data/", "", "srv/data/f", "x"), contents(part));
+    }
+
+    @Test
+    void hardLinksToHardLinksResolveAndUnknownTargetsFailThePath() throws Exception {
+        Path part = runDir.resolve("0.part");
+
+        ServiceBackupRunner.archive(tar(file("data/a", "same"), link("data/b", TarConstants.LF_LINK, "data/a"), link("data/c", TarConstants.LF_LINK, "data/b")),
+            "/srv/data", part, new ZipCompression(1));
+
+        assertEquals(Map.of("srv/data/a", "same", "srv/data/b", "same", "srv/data/c", "same"), contents(part));
+        Path broken = runDir.resolve("broken.part");
+        assertThrows(IOException.class,
+            () -> ServiceBackupRunner.archive(tar(link("data/b", TarConstants.LF_LINK, "data/nothing")), "/srv/data", broken, new ZipCompression(1)));
+        assertFalse(Files.exists(broken));
+        assertFalse(Files.exists(ZipPartWriter.indexOf(broken)));
+    }
+
+    @Test
+    void confirmsCoveredPathsOnlyWhenTheirDirectoryOrFileWasStored() throws Exception {
+        Path part = runDir.resolve("0.part");
+
+        ServiceBackupRunner.ArchiveResult result = ServiceBackupRunner.archive(
+            tar(dir("a/"), dir("a/dir/"), file("a/file", "f"), link("a/link", TarConstants.LF_SYMLINK, "/mnt/x"), dir("a/other/")),
+            "/srv/a", part, new ZipCompression(1),
+            java.util.Set.of(), java.util.Set.of("srv/a/dir", "srv/a/file", "srv/a/link", "srv/a/missing", "srv/a"));
+
+        assertEquals(java.util.Set.of("srv/a/dir", "srv/a/file", "srv/a"), result.confirmed());
     }
 
     @Test
@@ -163,8 +298,10 @@ class ServiceBackupRunnerTest {
 
         assertEquals(PARTIAL, result.status());
         assertTrue(result.errorMessage().startsWith("/srv/radarr/data: "));
-        assertTrue(Files.exists(runDir.resolve("radarr/0.zip")));
-        assertFalse(Files.exists(runDir.resolve("radarr/1.zip")));
+        assertTrue(Files.exists(runDir.resolve("radarr/0.part")));
+        assertFalse(Files.exists(runDir.resolve("radarr/1.part")));
+        assertFalse(Files.exists(runDir.resolve("radarr/1.part.partial")));
+        assertFalse(Files.exists(runDir.resolve("radarr/1.part.idx")));
     }
 
     @Test
@@ -193,8 +330,8 @@ class ServiceBackupRunnerTest {
     void rejectsEntriesOutsideTheBackedUpPath() {
         Path part = runDir.resolve("part.zip");
 
-        assertThrows(IOException.class, () -> ServiceBackupRunner.archive(tar(file("../escaped.txt", "x")), "/srv/data", part));
-        assertThrows(IOException.class, () -> ServiceBackupRunner.archive(tar(file("other/file", "x")), "/srv/data", part));
+        assertThrows(IOException.class, () -> ServiceBackupRunner.archive(tar(file("../escaped.txt", "x")), "/srv/data", part, new ZipCompression(1)));
+        assertThrows(IOException.class, () -> ServiceBackupRunner.archive(tar(file("other/file", "x")), "/srv/data", part, new ZipCompression(1)));
     }
 
     @Test
@@ -202,7 +339,7 @@ class ServiceBackupRunnerTest {
         Item hardLink = link("data/link", TarConstants.LF_LINK, "../etc/shadow");
 
         assertThrows(IOException.class,
-            () -> ServiceBackupRunner.archive(tar(dir("data/"), hardLink), "/srv/data", runDir.resolve("part.zip")));
+            () -> ServiceBackupRunner.archive(tar(dir("data/"), hardLink), "/srv/data", runDir.resolve("part.zip"), new ZipCompression(1)));
     }
 
     @Test
@@ -212,16 +349,12 @@ class ServiceBackupRunnerTest {
         assertEquals("srv/", ServiceBackupRunner.entryName(Path.of("/"), Path.of("/srv"), "srv/", true));
     }
 
-    static Map<String, String> contents(Path zipPath) throws IOException {
-        Map<String, String> entries = new TreeMap<>();
-        try (ZipFile zip = ZipFile.builder().setPath(zipPath).get()) {
-            for (ZipArchiveEntry entry : Collections.list(zip.getEntries())) {
-                try (InputStream in = zip.getInputStream(entry)) {
-                    entries.put(entry.getName(), new String(in.readAllBytes(), StandardCharsets.UTF_8));
-                }
-            }
-        }
-        return entries;
+    static Path merged(Path part) throws IOException {
+        return ArchiveTestSupport.merge(part.getParent(), part);
+    }
+
+    static Map<String, String> contents(Path part) throws IOException {
+        return ArchiveTestSupport.contents(merged(part));
     }
 
     record Item(TarArchiveEntry entry, byte[] content) {}

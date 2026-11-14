@@ -38,5 +38,33 @@ springBoot {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags("scale")
+    }
+}
+
+tasks.register<Test>("scaleTest") {
+    group = "verification"
+    description = "Builds very large archives under a small heap"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform {
+        includeTags("scale")
+    }
+    val scratch = layout.buildDirectory.dir("scale-tmp").get().asFile
+    maxHeapSize = "64m"
+    jvmArgs("-XX:+UseG1GC", "-Xms16m", "-XX:MinHeapFreeRatio=10", "-XX:MaxHeapFreeRatio=30", "-XX:+ExitOnOutOfMemoryError")
+    systemProperty("java.io.tmpdir", scratch.absolutePath)
+    doFirst {
+        scratch.deleteRecursively()
+        scratch.mkdirs()
+    }
+    doLast {
+        scratch.deleteRecursively()
+    }
+    testLogging {
+        showStandardStreams = true
+        events("passed", "failed", "skipped")
+    }
+    shouldRunAfter(tasks.test)
 }

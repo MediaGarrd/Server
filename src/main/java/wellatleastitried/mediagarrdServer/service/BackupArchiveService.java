@@ -10,22 +10,13 @@ import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
-import java.util.SortedMap;
-import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
-import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream;
-import org.apache.commons.compress.archivers.zip.ZipFile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -43,7 +34,6 @@ public class BackupArchiveService {
         .withZone(ZoneOffset.UTC);
     private static final long ARCHIVE_CACHE_TTL_MS = 60_000;  // Cache archive list for 60 seconds
     static final String ARCHIVE_SUFFIX = "-media-backup.zip";
-    private static final List<String> DATABASE_SIDECAR_SUFFIXES = List.of("", "-journal", "-wal", "-shm");
 
     private final DatabaseService db;
     private final AtomicReference<List<BackupArchive>> cachedArchives = new AtomicReference<>(null);
@@ -166,14 +156,14 @@ public class BackupArchiveService {
         LOGGER.info("Creating backup archive: {} from runDir={}", fileName, runDirectory);
         try {
             Files.createDirectories(root);
-            mergeParts(runDirectory, archivePath);
+            String checksum = mergeParts(runDirectory, archivePath);
             enforceRetention();
             long size = Files.size(archivePath);
             LOGGER.info("Archive created: {} ({} bytes)", fileName, size);
 
             invalidateCache();
 
-            return new BackupArchive(toId(fileName), fileName, archivePath, size, createdAt);
+            return new BackupArchive(toId(fileName), fileName, archivePath, size, createdAt, checksum);
         } catch (IOException e) {
             LOGGER.error("Failed to create backup archive: {}", fileName, e);
             throw new IllegalStateException("Failed to create backup archive", e);
@@ -289,62 +279,32 @@ public class BackupArchiveService {
         cachedArchives.set(null);
     }
 
-    private void mergeParts(Path runDirectory, Path zipPath) throws IOException {
+    private String mergeParts(Path runDirectory, Path zipPath) throws IOException {
         List<Path> parts;
         try (var walk = Files.walk(runDirectory)) {
             parts = walk
                 .filter(Files::isRegularFile)
-                .filter(path -> path.getFileName().toString().endsWith(".zip"))
+                .filter(path -> path.getFileName().toString().endsWith(ZipPartWriter.PART_SUFFIX))
                 .sorted()
                 .toList();
         }
 
         Path tempZip = zipPath.resolveSibling(zipPath.getFileName() + ".tmp");
         Path snapshotDirectory = runDirectory.resolve(DatabaseSnapshotService.PART_DIRECTORY);
-        List<ZipFile> openParts = new ArrayList<>();
-        SortedMap<String, ZipEntrySource> entries = new TreeMap<>();
-        Set<String> reserved = new HashSet<>();
+        ZipPartMerger.Result result;
         try {
-            for (Path part : parts.stream().filter(path -> path.startsWith(snapshotDirectory)).toList()) {
-                ZipFile zip = ZipFile.builder().setPath(part).get();
-                openParts.add(zip);
-                for (ZipArchiveEntry entry : Collections.list(zip.getEntriesInPhysicalOrder())) {
-                    entries.put(entry.getName(), new ZipEntrySource(zip, entry));
-                    if (!entry.isDirectory()) {
-                        DATABASE_SIDECAR_SUFFIXES.forEach(suffix -> reserved.add(entry.getName() + suffix));
-                    }
-                }
-            }
-            for (Path part : parts.stream().filter(path -> !path.startsWith(snapshotDirectory)).toList()) {
-                ZipFile zip = ZipFile.builder().setPath(part).get();
-                openParts.add(zip);
-                for (ZipArchiveEntry entry : Collections.list(zip.getEntriesInPhysicalOrder())) {
-                    if (reserved.contains(entry.getName())) {
-                        LOGGER.warn("Dropping {} from {}, the database snapshot owns that path", entry.getName(), part);
-                        continue;
-                    }
-                    entries.putIfAbsent(entry.getName(), new ZipEntrySource(zip, entry));
-                }
-            }
-            // Sorted names put every directory before its contents, so unzip applies directory modes and times
-            try (var out = new ZipArchiveOutputStream(tempZip)) {
-                for (ZipEntrySource source : entries.values()) {
-                    out.addRawArchiveEntry(source.entry(), source.zip().getRawInputStream(source.entry()));
-                }
-            }
+            result = ZipPartMerger.merge(
+                parts.stream().filter(path -> path.startsWith(snapshotDirectory)).toList(),
+                parts.stream().filter(path -> !path.startsWith(snapshotDirectory)).toList(),
+                tempZip, runDirectory);
         } catch (IOException | RuntimeException e) {
             Files.deleteIfExists(tempZip);
             throw e;
-        } finally {
-            for (ZipFile zip : openParts) {
-                zip.close();
-            }
         }
         Files.move(tempZip, zipPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        LOGGER.info("Merged {} part(s) into {} entries", parts.size(), entries.size());
+        LOGGER.info("Merged {} part(s) into {} entries", parts.size(), result.entries());
+        return result.checksum();
     }
-
-    private record ZipEntrySource(ZipFile zip, ZipArchiveEntry entry) {}
 
     private BackupArchive toArchive(Path path) {
         String fileName = path.getFileName().toString();

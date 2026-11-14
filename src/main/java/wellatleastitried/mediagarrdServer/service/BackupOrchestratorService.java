@@ -10,8 +10,12 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -146,19 +150,13 @@ public class BackupOrchestratorService {
                 LOGGER.info("Backup run started: runDir={}, services={}",
                     runDir, services.stream().map(ServiceDefinition::name).toList());
 
-                List<CompletableFuture<BackupServiceResult>> futures = services.stream()
-                    .map(service -> CompletableFuture
-                        .supplyAsync(() -> runner.run(service, runDir), runnerExecutor)
-                        .exceptionally(t -> {
-                            Throwable cause = unwrap(t);
-                            LOGGER.warn("Runner {} failed unexpectedly", service.name(), cause);
-                            return failedResult(service.name(), cause);
-                        }))
-                    .toList();
+                DatabaseSnapshotService.Outcome snapshot = snapshotDatabase(runDir);
+                BackupServiceResult snapshotResult = snapshot.result();
+                Set<String> excluded = COMPLETED.equals(snapshotResult.status()) && snapshot.hostPath() != null
+                    ? DatabaseSnapshotService.reservedNames(snapshot.hostPath())
+                    : Set.of();
 
-                List<BackupServiceResult> serviceRunResults = futures.stream()
-                    .map(CompletableFuture::join)
-                    .toList();
+                List<BackupServiceResult> serviceRunResults = copyServices(services, runDir, excluded);
 
                 List<BackupServiceResult> incomplete = serviceRunResults.stream()
                     .filter(r -> !COMPLETED.equals(r.status()))
@@ -180,7 +178,6 @@ public class BackupOrchestratorService {
                     throw new IllegalStateException("Every service failed, no archive created: " + errorMessage);
                 }
 
-                BackupServiceResult snapshotResult = snapshotDatabase(runDir);
                 List<BackupServiceResult> recordedResults = new ArrayList<>(serviceRunResults);
                 recordedResults.add(snapshotResult);
                 boolean snapshotFailed = !COMPLETED.equals(snapshotResult.status());
@@ -247,12 +244,85 @@ public class BackupOrchestratorService {
         }
     }
 
-    private BackupServiceResult snapshotDatabase(Path runDir) {
+    private List<BackupServiceResult> copyServices(List<ServiceDefinition> services, Path runDir, Set<String> excluded) {
+        Map<String, ServiceBackupRunner.Tally> tallies = new LinkedHashMap<>();
+        List<PathCoverage.Item> unresolved = new ArrayList<>();
+        for (ServiceDefinition service : services) {
+            tallies.put(service.name(), new ServiceBackupRunner.Tally(service.name()));
+            for (int i = 0; i < service.paths().size(); i++) {
+                unresolved.add(new PathCoverage.Item(service, i));
+            }
+        }
+
+        int round = 0;
+        while (!unresolved.isEmpty()) {
+            round++;
+            List<PathCoverage.Owner> owners = PathCoverage.plan(unresolved);
+            Map<String, List<PathCoverage.Owner>> byService = new LinkedHashMap<>();
+            owners.forEach(owner -> byService.computeIfAbsent(owner.item().service().name(), name -> new ArrayList<>()).add(owner));
+            LOGGER.debug("Copy round {}: {} path(s), {} left", round, owners.size(), unresolved.size());
+
+            Map<String, CompletableFuture<ServiceBackupRunner.ServiceRound>> futures = new LinkedHashMap<>();
+            byService.forEach((name, serviceOwners) -> {
+                ServiceDefinition service = serviceOwners.get(0).item().service();
+                List<Integer> indexes = serviceOwners.stream().map(owner -> owner.item().index()).toList();
+                List<Set<String>> covered = serviceOwners.stream()
+                    .map(owner -> owner.covered().stream().map(PathCoverage.Item::key).collect(Collectors.toUnmodifiableSet()))
+                    .toList();
+                futures.put(name, CompletableFuture
+                    .supplyAsync(() -> runner.copyPaths(service, indexes, runDir, excluded, covered), runnerExecutor)
+                    .exceptionally(t -> {
+                        Throwable cause = unwrap(t);
+                        LOGGER.warn("Runner {} failed unexpectedly", name, cause);
+                        return failedRound(service, indexes, cause);
+                    }));
+            });
+
+            Map<PathCoverage.Item, ServiceBackupRunner.PathCopy> copies = new HashMap<>();
+            futures.forEach((name, future) -> {
+                ServiceBackupRunner.ServiceRound finished = future.join();
+                tallies.get(name).add(finished);
+                ServiceDefinition service = byService.get(name).get(0).item().service();
+                finished.paths().forEach(copy -> copies.put(new PathCoverage.Item(service, copy.index()), copy));
+            });
+
+            List<PathCoverage.Item> resolved = new ArrayList<>();
+            for (PathCoverage.Owner owner : owners) {
+                resolved.add(owner.item());
+                ServiceBackupRunner.PathCopy copy = copies.get(owner.item());
+                if (copy == null || !copy.copied()) {
+                    owner.covered().forEach(item -> LOGGER.info("[{}] {} was covered by {} which failed, copying it on its own",
+                        item.service().name(), item.path(), owner.item().path()));
+                    continue;
+                }
+                for (PathCoverage.Item item : owner.covered()) {
+                    if (copy.confirmed().contains(item.key())) {
+                        tallies.get(item.service().name()).addCovered(1);
+                        resolved.add(item);
+                        LOGGER.info("[{}] {} is included in {} ({})", item.service().name(), item.path(), owner.item().path(), owner.item().service().name());
+                    } else {
+                        LOGGER.info("[{}] {} was not found inside {}, copying it on its own", item.service().name(), item.path(), owner.item().path());
+                    }
+                }
+            }
+            unresolved.removeAll(resolved);
+        }
+        return tallies.values().stream().map(ServiceBackupRunner.Tally::result).toList();
+    }
+
+    private static ServiceBackupRunner.ServiceRound failedRound(ServiceDefinition service, List<Integer> indexes, Throwable cause) {
+        List<ServiceBackupRunner.PathCopy> copies = indexes.stream()
+            .map(index -> new ServiceBackupRunner.PathCopy(index, service.paths().get(index), false, null, Set.of()))
+            .toList();
+        return new ServiceBackupRunner.ServiceRound(Objects.requireNonNullElse(cause.getMessage(), cause.toString()), copies);
+    }
+
+    private DatabaseSnapshotService.Outcome snapshotDatabase(Path runDir) {
         try {
-            return snapshotService.snapshot(runDir);
+            return snapshotService.snapshotWithHostPath(runDir);
         } catch (RuntimeException e) {
             LOGGER.warn("[{}] Failed to snapshot database", SNAPSHOT_NAME, e);
-            return failedResult(SNAPSHOT_NAME, e);
+            return new DatabaseSnapshotService.Outcome(failedResult(SNAPSHOT_NAME, e), null);
         }
     }
 

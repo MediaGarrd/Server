@@ -46,7 +46,7 @@ class DatabaseSnapshotServiceTest {
         db = new DatabaseService(properties);
         hostPaths = mock(DatabaseHostPathResolver.class);
         when(hostPaths.resolve(db.databaseFile())).thenReturn(HOST_DATABASE);
-        snapshots = new DatabaseSnapshotService(db, hostPaths);
+        snapshots = new DatabaseSnapshotService(db, hostPaths, new ZipCompression(1));
         run = Files.createDirectories(tempDir.resolve("run"));
     }
 
@@ -62,7 +62,7 @@ class DatabaseSnapshotServiceTest {
         assertEquals(COMPLETED, result.status());
         assertEquals(DatabaseSnapshotService.SERVICE_NAME, result.serviceName());
         Path part = run.resolve(DatabaseSnapshotService.PART_DIRECTORY).resolve(DatabaseSnapshotService.PART_NAME);
-        try (ZipFile zip = ZipFile.builder().setPath(part).get()) {
+        try (ZipFile zip = ZipFile.builder().setPath(ArchiveTestSupport.merge(tempDir, part)).get()) {
             assertEquals(List.of("srv/mediagarrd/db/mediagarrd.db"), Collections.list(zip.getEntries()).stream().map(ZipArchiveEntry::getName).toList());
             ZipArchiveEntry entry = zip.getEntry("srv/mediagarrd/db/mediagarrd.db");
             assertEquals(0640, entry.getUnixMode() & 07777);

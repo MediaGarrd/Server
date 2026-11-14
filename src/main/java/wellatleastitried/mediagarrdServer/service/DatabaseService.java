@@ -313,7 +313,7 @@ public class DatabaseService {
             statement.setString(3, backupRecord.endTime());
             statement.setString(4, backupRecord.status());
             BackupArchive archive = backupRecord.archive();
-            statement.setString(5, archive == null ? null : archive.generateChecksum());
+            statement.setString(5, archive == null ? null : archive.resolvedChecksum());
             statement.setString(6, archive == null ? null : archive.path().toString());
             statement.setLong(7, archive == null ? 0 : archive.sizeBytes());
             statement.setString(8, archive == null ? null : formatTime(archive.createdAt()));

@@ -5,6 +5,15 @@
 - A scheduled check with nothing to back up now waits one full interval instead of retrying every 30 seconds, and adding or editing a service makes the schedule due again right away
 - `GET /api/v1/events` also sends `backups-changed` (backup deleted, backup location changed) and `config-changed` (schedule, settings, or services changed), each as `{"at":"<ISO-8601>"}`
 - `GET /api/v1/health` and `GET /api/v1/backups` are logged at DEBUG, so polling no longer fills the log
+- An archive's SHA-256 is now computed while it is written instead of by reading the finished file again, which saves a full pass over every backup
+- Archives are compressed at a lighter level by default (`MEDIAGARRD_COMPRESSION_LEVEL`, `0` to `9`, default `1`), and already-compressed files (images, video, audio, zip, gz and similar) are stored as they are
+- Backups use a fixed amount of memory regardless of how many files or how much data they hold: archives are written as a stream with an on-disk index, so any backup that fits on disk completes
+- The archive writer is our own: zip64 is used automatically for entries over 4 GB, archives over 4 GB, and more than 65,535 entries, and entries now also carry an exact UTC modification time
+- Entry owners are always written as a 4-byte uid/gid (`0x7875`), because bsdtar reads only 2- or 4-byte widths and ignored the shorter form, so `bsdtar -xp` now restores small uids such as 33 (www-data) correctly; the NTFS extra (`0x000A`) is no longer written
+- A symlink inside a copied path that is also configured as its own path is not stored; the configured path is copied from its real content instead, so restoring that path no longer hits a link-versus-directory conflict and the merge never sees a duplicate name
+- A path nested inside another configured path is no longer copied twice: it is skipped when the outer copy includes it, and copied on its own if the outer copy failed, and each service's result reflects its own outcome
+- The database snapshot is taken first, and the live database and its `-journal`, `-wal`, and `-shm` files are left out of service copies only when the snapshot succeeded
+- The container image is pinned to `eclipse-temurin:21.0.13_9-jre` and starts the JVM with G1, a small starting heap, periodic heap trimming, and `-XX:+ExitOnOutOfMemoryError`; the heap cap follows the container memory (`JAVA_TOOL_OPTIONS`, see `docs/settings.md`), and lazy initialization is no longer used
 
 ## 11-11-26
 - `GET /api/v1/events` is a live Server-Sent Events stream that needs no setup session: `state` on connect, `run-started` and `run-finished` (`COMPLETED`, `PARTIAL`, or `FAILED`) the moment a run begins and ends, and a `ping` every 20 seconds

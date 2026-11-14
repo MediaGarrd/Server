@@ -13,19 +13,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.IntStream;
 
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
 import org.apache.commons.compress.archivers.zip.UnixStat;
-import org.apache.commons.compress.archivers.zip.X7875_NewUnix;
-import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
-import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream;
-import org.apache.commons.compress.archivers.zip.ZipFile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -38,83 +33,164 @@ public class ServiceBackupRunner {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ServiceBackupRunner.class);
 
-    static final String PART_SUFFIX = ".zip";
-    static final String LINKS_PART_SUFFIX = "-links.zip";
+    static final String PART_SUFFIX = ZipPartWriter.PART_SUFFIX;
+
+    public record PathCopy(int index, String path, boolean copied, String error, Set<String> confirmed) {}
+
+    public record ServiceRound(String error, List<PathCopy> paths) {}
+
+    record ArchiveResult(int entries, Set<String> confirmed) {}
+
+    public static final class Tally {
+
+        private final String serviceName;
+        private final String startTime = recordCurrentTime();
+        private final List<String> errors = new ArrayList<>();
+        private String endTime = startTime;
+        private int copied;
+
+        public Tally(String serviceName) {
+            this.serviceName = serviceName;
+        }
+
+        public void add(ServiceRound round) {
+            if (round.error() != null && !errors.contains(round.error())) {
+                errors.add(round.error());
+            }
+            for (PathCopy path : round.paths()) {
+                if (path.copied()) {
+                    copied++;
+                } else if (path.error() != null) {
+                    errors.add(path.error());
+                }
+            }
+            endTime = recordCurrentTime();
+        }
+
+        public void addCovered(int paths) {
+            copied += paths;
+            endTime = recordCurrentTime();
+        }
+
+        public BackupServiceResult result() {
+            String status = errors.isEmpty() ? COMPLETED : copied > 0 ? PARTIAL : FAILED;
+            return new BackupServiceResult(null, status, startTime, endTime, serviceName,
+                errors.isEmpty() ? null : String.join("; ", errors));
+        }
+    }
 
     private final DockerService docker;
+    private final ZipCompression compression;
 
-    public ServiceBackupRunner(DockerService docker) {
+    public ServiceBackupRunner(DockerService docker, ZipCompression compression) {
         this.docker = docker;
+        this.compression = compression;
     }
 
     public BackupServiceResult run(ServiceDefinition service, Path runDirectory) {
-        String startTime = recordCurrentTime();
-        Path serviceDirectory = runDirectory.resolve(service.name()).toAbsolutePath().normalize();
-        List<String> errors = new ArrayList<>();
-        int copied = 0;
+        Tally tally = new Tally(service.name());
+        tally.add(copyPaths(service, IntStream.range(0, service.paths().size()).boxed().toList(), runDirectory, Set.of(), List.of()));
+        return tally.result();
+    }
 
+    public ServiceRound copyPaths(ServiceDefinition service, List<Integer> indexes, Path runDirectory, Set<String> excluded, List<Set<String>> covered) {
+        Path serviceDirectory = runDirectory.resolve(service.name()).toAbsolutePath().normalize();
+        List<PathCopy> copies = new ArrayList<>();
         try {
             Files.createDirectories(serviceDirectory);
             String containerId = docker.containerFor(service);
-            for (int i = 0; i < service.paths().size(); i++) {
-                String hostPath = service.paths().get(i);
-                Path part = serviceDirectory.resolve(i + PART_SUFFIX);
-                try (InputStream tar = docker.copyFrom(containerId, hostPath)) {
-                    int entries = archive(tar, hostPath, part);
-                    copied++;
-                    LOGGER.info("[{}] Copied {} ({} entries)", service.name(), hostPath, entries);
-                } catch (IOException | RuntimeException e) {
-                    discard(part);
-                    LOGGER.warn("[{}] Failed to copy {}", service.name(), hostPath, e);
-                    errors.add(hostPath + ": " + describe(e));
-                }
+            for (int i = 0; i < indexes.size(); i++) {
+                copies.add(copyPath(containerId, service, indexes.get(i), serviceDirectory, excluded, covered.isEmpty() ? Set.of() : covered.get(i)));
             }
+            return new ServiceRound(null, copies);
         } catch (IOException | RuntimeException e) {
             LOGGER.warn("[{}] Unable to prepare helper container", service.name(), e);
-            errors.add(describe(e));
+            for (int i = copies.size(); i < indexes.size(); i++) {
+                int index = indexes.get(i);
+                copies.add(new PathCopy(index, service.paths().get(index), false, null, Set.of()));
+            }
+            return new ServiceRound(describe(e), copies);
         }
-
-        String status = errors.isEmpty() ? COMPLETED : copied > 0 ? PARTIAL : FAILED;
-        return new BackupServiceResult(null, status, startTime, recordCurrentTime(), service.name(),
-            errors.isEmpty() ? null : String.join("; ", errors));
     }
 
-    static int archive(InputStream tarStream, String hostPath, Path part) throws IOException {
+    private PathCopy copyPath(String containerId, ServiceDefinition service, int index, Path serviceDirectory, Set<String> excluded, Set<String> covered) {
+        String hostPath = service.paths().get(index);
+        Path part = serviceDirectory.resolve(index + PART_SUFFIX);
+        try (InputStream tar = docker.copyFrom(containerId, hostPath)) {
+            ArchiveResult result = archive(tar, hostPath, part, compression, excluded, covered);
+            LOGGER.info("[{}] Copied {} ({} entries)", service.name(), hostPath, result.entries());
+            return new PathCopy(index, hostPath, true, null, result.confirmed());
+        } catch (IOException | RuntimeException e) {
+            discard(part);
+            LOGGER.warn("[{}] Failed to copy {}", service.name(), hostPath, e);
+            return new PathCopy(index, hostPath, false, hostPath + ": " + describe(e), Set.of());
+        }
+    }
+
+    static int archive(InputStream tarStream, String hostPath, Path part, ZipCompression compression) throws IOException {
+        return archive(tarStream, hostPath, part, compression, Set.of(), Set.of()).entries();
+    }
+
+    static ArchiveResult archive(InputStream tarStream, String hostPath, Path part, ZipCompression compression, Set<String> excluded, Set<String> covered)
+        throws IOException {
         Path source = Path.of(hostPath);
         Path base = Objects.requireNonNullElse(source.getParent(), source.getRoot());
-        Set<String> names = new HashSet<>();
-        Map<String, String> hardLinks = new LinkedHashMap<>();
+        Set<String> confirmed = new HashSet<>();
 
-        try (var tar = new TarArchiveInputStream(tarStream); var zip = new ZipArchiveOutputStream(part)) {
+        try (var tar = new TarArchiveInputStream(tarStream); var writer = new ZipPartWriter(part, compression)) {
             TarArchiveEntry entry;
             while ((entry = tar.getNextEntry()) != null) {
                 String name = entryName(base, source, entry.getName(), entry.isDirectory());
-                if (!names.add(name)) {
+                if (excluded.contains(name)) {
+                    writer.markSkipped(name);
+                    LOGGER.debug("Skipping {} in {}, the database snapshot owns that path", name, hostPath);
                     continue;
                 }
+                if (writer.contains(name)) {
+                    continue;
+                }
+                long modified = entry.getModTime().getTime();
+                boolean content = false;
                 if (entry.isFIFO() || entry.isCharacterDevice() || entry.isBlockDevice()) {
-                    names.remove(name);
+                    writer.markSkipped(name);
                     LOGGER.warn("Skipping special file {} in {}", entry.getName(), hostPath);
                 } else if (entry.isDirectory()) {
-                    write(zip, entry, name, UnixStat.DIR_FLAG, null);
+                    writer.addEntry(name, UnixStat.DIR_FLAG | (entry.getMode() & 07777), entry.getLongUserId(), entry.getLongGroupId(), modified, 0,
+                        InputStream.nullInputStream());
+                    content = true;
+                } else if (entry.isSymbolicLink() && covered.contains(name)) {
+                    writer.markSkipped(name);
+                    LOGGER.debug("Not storing symlink {} in {}, it is configured as its own path and is copied from its target", name, hostPath);
                 } else if (entry.isSymbolicLink()) {
                     byte[] target = entry.getLinkName().getBytes(StandardCharsets.UTF_8);
-                    write(zip, entry, name, UnixStat.LINK_FLAG, new ByteArrayInputStream(target));
+                    writer.addEntry(name, UnixStat.LINK_FLAG | (entry.getMode() & 07777), entry.getLongUserId(), entry.getLongGroupId(), modified,
+                        target.length, new ByteArrayInputStream(target));
                 } else if (entry.isLink()) {
-                    hardLinks.put(name, entryName(base, source, entry.getLinkName(), false));
+                    if (writer.addCopy(name, entryName(base, source, entry.getLinkName(), false))) {
+                        content = true;
+                    } else {
+                        writer.markSkipped(name);
+                        LOGGER.warn("Skipping hard link {} in {}, its target was skipped", entry.getName(), hostPath);
+                    }
                 } else if (entry.isFile()) {
-                    write(zip, entry, name, UnixStat.FILE_FLAG, tar);
+                    writer.addEntry(name, UnixStat.FILE_FLAG | (entry.getMode() & 07777), entry.getLongUserId(), entry.getLongGroupId(), modified,
+                        entry.getRealSize(), tar);
+                    content = true;
                 } else {
-                    names.remove(name);
+                    writer.markSkipped(name);
                     LOGGER.warn("Skipping unsupported entry {} in {}", entry.getName(), hostPath);
                 }
+                if (content) {
+                    String key = name.endsWith("/") ? name.substring(0, name.length() - 1) : name;
+                    if (covered.contains(key)) {
+                        confirmed.add(key);
+                    }
+                }
             }
+            int entries = writer.entryCount();
+            writer.complete();
+            return new ArchiveResult(entries, confirmed);
         }
-
-        if (!hardLinks.isEmpty()) {
-            writeHardLinks(part, hardLinks);
-        }
-        return names.size();
     }
 
     static String entryName(Path base, Path source, String tarName, boolean directory) throws IOException {
@@ -126,65 +202,12 @@ public class ServiceBackupRunner {
         return directory ? name + "/" : name;
     }
 
-    private static void write(ZipArchiveOutputStream zip, TarArchiveEntry source, String name, int type, InputStream content)
-        throws IOException {
-        ZipArchiveEntry entry = new ZipArchiveEntry(name);
-        entry.setUnixMode(type | (source.getMode() & 07777));
-        entry.setTime(source.getModTime().getTime());
-        entry.addExtraField(owner(source.getLongUserId(), source.getLongGroupId()));
-        zip.putArchiveEntry(entry);
-        if (content != null) {
-            content.transferTo(zip);
-        }
-        zip.closeArchiveEntry();
-    }
-
-    private static void writeHardLinks(Path part, Map<String, String> hardLinks) throws IOException {
-        Path linksPart = linksPart(part);
-        try (ZipFile written = ZipFile.builder().setPath(part).get(); var zip = new ZipArchiveOutputStream(linksPart)) {
-            for (var link : hardLinks.entrySet()) {
-                ZipArchiveEntry target = written.getEntry(link.getValue());
-                if (target == null) {
-                    throw new IOException("Hard link " + link.getKey() + " points to a missing entry " + link.getValue());
-                }
-                zip.addRawArchiveEntry(renamed(target, link.getKey()), written.getRawInputStream(target));
-            }
-        } catch (IOException e) {
-            Files.deleteIfExists(linksPart);
-            throw e;
-        }
-    }
-
-    private static ZipArchiveEntry renamed(ZipArchiveEntry target, String name) {
-        ZipArchiveEntry entry = new ZipArchiveEntry(name);
-        entry.setMethod(target.getMethod());
-        entry.setCrc(target.getCrc());
-        entry.setSize(target.getSize());
-        entry.setCompressedSize(target.getCompressedSize());
-        entry.setUnixMode(target.getUnixMode());
-        entry.setTime(target.getTime());
-        entry.setExtraFields(target.getExtraFields());
-        return entry;
-    }
-
-    static X7875_NewUnix owner(long uid, long gid) {
-        X7875_NewUnix owner = new X7875_NewUnix();
-        owner.setUID(uid);
-        owner.setGID(gid);
-        return owner;
-    }
-
     private static void discard(Path part) {
         try {
-            Files.deleteIfExists(part);
-            Files.deleteIfExists(linksPart(part));
+            ZipPartWriter.discard(part);
         } catch (IOException e) {
             LOGGER.warn("Unable to remove incomplete archive part {}", part, e);
         }
-    }
-
-    private static Path linksPart(Path part) {
-        return part.resolveSibling(part.getFileName().toString().replace(PART_SUFFIX, LINKS_PART_SUFFIX));
     }
 
     private static String describe(Throwable e) {

@@ -27,6 +27,7 @@ class MediaGarrdPropertiesBindingTest {
         assertEquals(10, properties.getRetentionCount());
         assertEquals(tmp + "/mediagarrd-binding-test/backups", properties.getBackupRoot());
         assertEquals(tmp + "/mediagarrd-binding-test/mediagarrd.db", properties.getDatabasePath());
+        assertEquals(1, properties.getCompressionLevel());
         assertEquals("alpine:3", properties.getHelperImage());
         assertEquals("MediaGarrd/Server", properties.getUpdateRepository());
         assertEquals("http://127.0.0.1:1", properties.getGithubApiBaseUrl());

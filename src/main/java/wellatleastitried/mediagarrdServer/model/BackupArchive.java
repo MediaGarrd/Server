@@ -15,8 +15,17 @@ public record BackupArchive(
     String fileName,
     Path path,
     long sizeBytes,
-    Instant createdAt
+    Instant createdAt,
+    String checksum
 ) {
+    public BackupArchive(String id, String fileName, Path path, long sizeBytes, Instant createdAt) {
+        this(id, fileName, path, sizeBytes, createdAt, null);
+    }
+
+    public String resolvedChecksum() {
+        return checksum != null ? checksum : generateChecksum();
+    }
+
     public String generateChecksum() {
         try (DigestInputStream in = new DigestInputStream(Files.newInputStream(path), MessageDigest.getInstance("SHA-256"))) {
             in.transferTo(OutputStream.nullOutputStream());

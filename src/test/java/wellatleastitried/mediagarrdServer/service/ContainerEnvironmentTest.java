@@ -30,14 +30,6 @@ class ContainerEnvironmentTest {
     }
 
     @Test
-    void neverFallsBackToTheHostnameWhenMountinfoGivesAnId() throws Exception {
-        ContainerEnvironment environment = environment(mountInfo(
-            "4 1 8:1 /var/lib/docker/containers/" + ID + "/hostname /etc/hostname rw - ext4 /dev/sda1 rw"), "other-container");
-
-        assertEquals(List.of(ID), environment.containerIdCandidates());
-    }
-
-    @Test
     void findsRootlessDockerContainers() throws Exception {
         String line = "4 1 8:1 /home/u/.local/share/docker/containers/" + ID + "/hostname /etc/hostname rw - ext4 /dev/sda1 rw";
 

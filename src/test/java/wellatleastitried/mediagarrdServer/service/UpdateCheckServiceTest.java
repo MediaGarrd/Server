@@ -72,47 +72,30 @@ class UpdateCheckServiceTest {
 
     @Test
     void reportsAnUpdateWhenTheLatestReleaseIsNewer() {
+        properties.setUpdateRepository("someone/else");
         response = release("v0.2.0");
         UpdateCheckService service = service("0.1.0");
 
         service.check();
 
         assertEquals(new VersionStatusDto("0.1.0", "0.2.0", "https://github.com/MediaGarrd/Server/releases/tag/v0.2.0", true, CheckState.OK, NOW, null), service.status());
-        assertEquals(List.of("/repos/MediaGarrd/Server/releases/latest"), requests);
+        assertEquals(List.of("/repos/someone/else/releases/latest"), requests);
         assertEquals(List.of("MediaGarrd-Server/0.1.0"), userAgents);
     }
 
     @Test
-    void reportsUpToDateWhenTheLatestReleaseIsTheSameVersion() {
-        response = release("v0.1.0");
-        UpdateCheckService service = service("0.1.0");
+    void reportsUpToDateWhenTheLatestReleaseIsNotNewer() {
+        String[][] currentAndLatest = {{"0.1.0", "v0.1.0"}, {"0.2.0", "v0.1.0"}, {"0.2.0", "v0.2.0-rc.1"}};
+        for (String[] pair : currentAndLatest) {
+            response = release(pair[1]);
+            UpdateCheckService service = service(pair[0]);
 
-        service.check();
+            service.check();
 
-        assertEquals(CheckState.OK, service.status().checkState());
-        assertEquals("0.1.0", service.status().latestVersion());
-        assertFalse(service.status().updateAvailable());
-    }
-
-    @Test
-    void neverReportsAnOlderReleaseAsAnUpdate() {
-        response = release("v0.1.0");
-        UpdateCheckService service = service("0.2.0");
-
-        service.check();
-
-        assertEquals(CheckState.OK, service.status().checkState());
-        assertFalse(service.status().updateAvailable());
-    }
-
-    @Test
-    void treatsAPrereleaseOfTheRunningVersionAsOlder() {
-        response = release("v0.2.0-rc.1");
-        UpdateCheckService service = service("0.2.0");
-
-        service.check();
-
-        assertFalse(service.status().updateAvailable());
+            assertEquals(CheckState.OK, service.status().checkState(), pair[0] + " vs " + pair[1]);
+            assertEquals(pair[1].substring(1), service.status().latestVersion(), pair[0] + " vs " + pair[1]);
+            assertFalse(service.status().updateAvailable(), pair[0] + " vs " + pair[1]);
+        }
     }
 
     @Test
@@ -255,17 +238,6 @@ class UpdateCheckServiceTest {
         assertEquals(CheckState.OK, service.status().checkState());
         assertTrue(service.status().updateAvailable());
         assertNull(service.status().message());
-    }
-
-    @Test
-    void usesTheConfiguredRepository() {
-        properties.setUpdateRepository("someone/else");
-        response = release("v0.2.0");
-        UpdateCheckService service = service("0.1.0");
-
-        service.check();
-
-        assertEquals(List.of("/repos/someone/else/releases/latest"), requests);
     }
 
     private void handle(HttpExchange exchange) throws IOException {

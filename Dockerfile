@@ -10,6 +10,9 @@ EXPOSE 8080
 
 ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=50"
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD curl -fsS -o /dev/null http://127.0.0.1:${SERVER_PORT:-8080}/api/v1/health
+
 ENTRYPOINT ["java", \
   "-XX:+UseG1GC", \
   "-Xms16m", \

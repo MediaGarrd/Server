@@ -54,4 +54,14 @@ class ServiceDefinitionTest {
     void requiresAtLeastOnePath() {
         assertThrows(IllegalArgumentException.class, () -> new ServiceDefinition("radarr", List.of(" ")).validate());
     }
+
+    @Test
+    void limitsThePathCountAndPathLength() {
+        java.util.List<String> many = java.util.stream.IntStream.range(0, ServiceDefinition.MAX_PATHS + 1).mapToObj(i -> "/p" + i).toList();
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class, () -> new ServiceDefinition("svc", many).validate());
+        String longPath = "/" + "a".repeat(ServiceDefinition.MAX_PATH_LENGTH);
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+            () -> new ServiceDefinition("svc", java.util.List.of(longPath)).validate());
+        new ServiceDefinition("svc", java.util.stream.IntStream.range(0, ServiceDefinition.MAX_PATHS).mapToObj(i -> "/p" + i).toList()).validate();
+    }
 }

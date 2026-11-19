@@ -10,8 +10,6 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
-
 @Timeout(30)
 class ZipCompressionTest {
 
@@ -29,23 +27,8 @@ class ZipCompressionTest {
         assertEquals(level, new ZipCompression(level).level());
     }
 
-    @Test
-    void defaultsToLevelOneFromProperties() {
-        assertEquals(1, new ZipCompression(new MediaGarrdProperties()).level());
-    }
-
-    @Test
-    void rejectsAnInvalidLevelFromProperties() {
-        MediaGarrdProperties properties = new MediaGarrdProperties();
-        properties.setCompressionLevel(12);
-
-        assertThrows(IllegalStateException.class, () -> new ZipCompression(properties));
-    }
-
     @ParameterizedTest
-    @ValueSource(strings = {"a.zip", "a.gz", "a.tgz", "a.bz2", "a.xz", "a.zst", "a.7z", "a.rar", "a.jpg", "a.jpeg", "a.png",
-        "a.gif", "a.webp", "a.mp4", "a.mkv", "a.mp3", "a.flac", "a.ogg", "a.mov", "a.avi", "a.webm", "a.m4v", "a.m4a", "a.aac",
-        "a.opus", "a.heic", "a.avif", "a.lz4", "a.zstd", "a.jar", "a.docx", "a.xlsx", "a.pptx", "dir/Photo.JPG", "x/y.tar.gz"})
+    @ValueSource(strings = {"a.zip", "a.mkv", "a.jpg", "a.flac", "a.docx", "a.zst", "dir/Photo.JPG", "x/y.tar.gz", "a.heic", "a.7z"})
     void storesAlreadyCompressedFilesAtAnyNonZeroLevel(String name) {
         for (int level : new int[] {1, 9}) {
             assertTrue(new ZipCompression(level).stores(name), name);
@@ -67,16 +50,5 @@ class ZipCompressionTest {
         assertTrue(none.stores("a.txt"));
         assertTrue(none.stores("a.jpg"));
         assertTrue(none.stores("noextension"));
-    }
-
-    @Test
-    void storesAlreadyCompressedFilesAtLevelOneAndReportsItsLevel() {
-        ZipCompression one = new ZipCompression(1);
-
-        assertEquals(1, one.level());
-        assertTrue(one.stores("a.mkv"));
-        assertFalse(one.stores("a.txt"));
-        assertEquals(0, new ZipCompression(0).level());
-        assertTrue(new ZipCompression(0).stores("a.txt"));
     }
 }

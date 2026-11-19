@@ -1,13 +1,10 @@
 plugins {
     java
-    id("org.springframework.boot") version "3.3.5"
-    id("io.spring.dependency-management") version "1.1.6"
+    id("org.springframework.boot") version "4.1.3"
+    id("io.spring.dependency-management") version "1.1.7"
 }
 
 version = "0.1.0"
-
-extra["httpclient5.version"] = "5.4.4"
-extra["httpcore5.version"] = "5.3.4"
 
 repositories {
     mavenCentral()
@@ -15,11 +12,11 @@ repositories {
 
 dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-test")
-    testImplementation("org.xerial:sqlite-jdbc:3.44.0.0")
+    testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-webmvc")
     implementation("org.springframework.boot:spring-boot-starter")
-    implementation("org.xerial:sqlite-jdbc:3.44.0.0")
+    implementation("org.xerial:sqlite-jdbc:3.54.1.0")
     implementation("com.github.docker-java:docker-java-core:3.5.1")
     implementation("com.github.docker-java:docker-java-transport-httpclient5:3.5.1")
     implementation("org.apache.commons:commons-compress:1.27.1")

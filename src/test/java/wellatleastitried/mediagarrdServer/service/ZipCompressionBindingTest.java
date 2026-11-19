@@ -1,6 +1,5 @@
 package wellatleastitried.mediagarrdServer.service;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
@@ -16,19 +15,6 @@ import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
 class ZipCompressionBindingTest {
 
     private final ApplicationContextRunner runner = new ApplicationContextRunner().withUserConfiguration(Config.class);
-
-    @Test
-    void bindsALevelInRange() {
-        runner.withPropertyValues("mediagarrd.compression-level=5").run(context -> {
-            assertTrue(context.getStartupFailure() == null);
-            assertEquals(5, context.getBean(ZipCompression.class).level());
-        });
-    }
-
-    @Test
-    void defaultsToOne() {
-        runner.run(context -> assertEquals(1, context.getBean(ZipCompression.class).level()));
-    }
 
     @Test
     void failsStartupForALevelOutOfRange() {

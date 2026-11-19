@@ -38,6 +38,9 @@ import wellatleastitried.mediagarrdServer.model.BackupArchive;
 import wellatleastitried.mediagarrdServer.model.BackupRunResult;
 import wellatleastitried.mediagarrdServer.model.BackupServiceResult;
 import wellatleastitried.mediagarrdServer.model.ServiceDefinition;
+import wellatleastitried.mediagarrdServer.repository.BackupRecordRepository;
+import wellatleastitried.mediagarrdServer.repository.ServiceRepository;
+import wellatleastitried.mediagarrdServer.repository.SettingsRepository;
 
 @Timeout(30)
 class BackupOrchestratorServiceTest {
@@ -51,10 +54,13 @@ class BackupOrchestratorServiceTest {
     private final ServiceBackupRunner runner = mock(ServiceBackupRunner.class);
     private final BackupArchiveService archives = mock(BackupArchiveService.class);
     private final BackupScheduleService schedule = mock(BackupScheduleService.class);
-    private final DatabaseService db = mock(DatabaseService.class);
+    private final ServiceRepository services = mock(ServiceRepository.class);
+    private final BackupRecordRepository backups = mock(BackupRecordRepository.class);
     private final DatabaseSnapshotService snapshots = mock(DatabaseSnapshotService.class);
     private final RunStatusBroadcaster broadcaster = mock(RunStatusBroadcaster.class);
-    private final BackupOrchestratorService orchestrator = new BackupOrchestratorService(runner, archives, schedule, snapshots, db, broadcaster);
+    private final BackupRunLifecycle lifecycle = new BackupRunLifecycle(broadcaster);
+    private final WebhookService webhook = mock(WebhookService.class);
+    private final BackupOrchestratorService orchestrator = new BackupOrchestratorService(runner, archives, schedule, snapshots, services, backups, lifecycle, webhook);
 
     @BeforeEach
     void setUp() {
@@ -70,26 +76,28 @@ class BackupOrchestratorServiceTest {
 
     @Test
     void refusesToRunWithoutServices() {
-        when(db.fetchServices()).thenReturn(List.of());
+        when(services.fetchServices()).thenReturn(List.of());
 
-        assertThrows(BackupOrchestratorService.RunRejectedException.class, orchestrator::runBackup);
+        assertThrows(RunRejectedException.class, orchestrator::runBackup);
 
         verify(archives, never()).createRunDirectory();
         assertFalse(orchestrator.isRunning());
         verify(broadcaster, never()).publishStarted(any());
         verify(broadcaster, never()).publishFinished(any(), any(), any());
         verify(schedule, never()).deferNextRun();
+        verify(webhook, never()).notifyRun(any());
+        verify(webhook, never()).notifyFailure(any());
     }
 
     @Test
     void aRejectedManualRunLeavesTheRealScheduleUntouched() {
         MediaGarrdProperties properties = new MediaGarrdProperties();
-        BackupScheduleService realSchedule = new BackupScheduleService(properties, db);
-        BackupOrchestratorService manual = new BackupOrchestratorService(runner, archives, realSchedule, snapshots, db, broadcaster);
-        when(db.fetchServices()).thenReturn(List.of());
+        BackupScheduleService realSchedule = new BackupScheduleService(properties, mock(SettingsRepository.class), mock(BackupRecordRepository.class), mock(SetupService.class));
+        BackupOrchestratorService manual = new BackupOrchestratorService(runner, archives, realSchedule, snapshots, services, backups, new BackupRunLifecycle(broadcaster), webhook);
+        when(services.fetchServices()).thenReturn(List.of());
         Instant before = realSchedule.getNextRun();
 
-        assertThrows(BackupOrchestratorService.RunRejectedException.class, manual::runBackup);
+        assertThrows(RunRejectedException.class, manual::runBackup);
 
         assertEquals(before, realSchedule.getNextRun());
         manual.shutdownRunnerExecutor();
@@ -98,7 +106,7 @@ class BackupOrchestratorServiceTest {
     @Test
     void aScheduledRunWithoutServicesDefersTheNextCheck() {
         when(schedule.dueNow()).thenReturn(true);
-        when(db.fetchServices()).thenReturn(List.of());
+        when(services.fetchServices()).thenReturn(List.of());
 
         orchestrator.scheduledRun();
 
@@ -110,7 +118,7 @@ class BackupOrchestratorServiceTest {
     void aScheduledRunRejectedBecauseOneIsInProgressDoesNotDefer() throws Exception {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
-        when(db.fetchServices()).thenReturn(List.of(RADARR));
+        when(services.fetchServices()).thenReturn(List.of(RADARR));
         when(runner.copyPaths(eq(RADARR), any(), any(), any(), any())).thenAnswer(invocation -> {
             started.countDown();
             release.await();
@@ -120,11 +128,177 @@ class BackupOrchestratorServiceTest {
 
         CompletableFuture<BackupRunResult> manual = CompletableFuture.supplyAsync(orchestrator::runBackup);
         assertTrue(started.await(5, TimeUnit.SECONDS));
-        assertThrows(BackupOrchestratorService.RunRejectedException.class, () -> orchestrator.runBackup(true));
+        assertThrows(RunRejectedException.class, () -> orchestrator.runBackup(true));
 
         verify(schedule, never()).deferNextRun();
         release.countDown();
         manual.get(5, TimeUnit.SECONDS);
+    }
+
+    @Test
+    void aDueScheduledRunWithServicesRunsABackup() {
+        when(schedule.dueNow()).thenReturn(true);
+        when(services.fetchServices()).thenReturn(List.of(RADARR));
+        when(runner.copyPaths(eq(RADARR), any(), eq(RUN_DIR), any(), any())).thenReturn(round(RADARR, COMPLETED));
+
+        orchestrator.scheduledRun();
+
+        verify(schedule).markRunStarted();
+        verify(archives).createArchive(RUN_DIR);
+        verify(broadcaster).publishFinished(eq(COMPLETED), any(), any());
+    }
+
+    @Test
+    void aScheduledCheckThatIsNotDueDoesNothing() {
+        when(schedule.dueNow()).thenReturn(false);
+
+        orchestrator.scheduledRun();
+
+        verify(services, never()).fetchServices();
+        verify(broadcaster, never()).publishStarted(any());
+        verify(schedule, never()).markRunStarted();
+        verify(schedule, never()).deferNextRun();
+    }
+
+    @Test
+    void aScheduledCheckDuringARunSkipsWithoutLookingAtTheSchedule() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(services.fetchServices()).thenReturn(List.of(RADARR));
+        when(runner.copyPaths(eq(RADARR), any(), any(), any(), any())).thenAnswer(invocation -> {
+            started.countDown();
+            release.await();
+            return round(RADARR, COMPLETED);
+        });
+        CompletableFuture<BackupRunResult> manual = CompletableFuture.supplyAsync(orchestrator::runBackup);
+        assertTrue(started.await(5, TimeUnit.SECONDS));
+
+        orchestrator.scheduledRun();
+
+        verify(schedule, never()).dueNow();
+        verify(broadcaster, org.mockito.Mockito.times(1)).publishStarted(any());
+        release.countDown();
+        manual.get(5, TimeUnit.SECONDS);
+    }
+
+    @Test
+    void aRunRejectedBecauseOneIsInProgressSendsNoWebhook() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(services.fetchServices()).thenReturn(List.of(RADARR));
+        when(runner.copyPaths(eq(RADARR), any(), any(), any(), any())).thenAnswer(invocation -> {
+            started.countDown();
+            release.await();
+            return round(RADARR, COMPLETED);
+        });
+        CompletableFuture<BackupRunResult> manual = CompletableFuture.supplyAsync(orchestrator::runBackup);
+        assertTrue(started.await(5, TimeUnit.SECONDS));
+
+        assertThrows(RunRejectedException.class, orchestrator::runBackup);
+
+        release.countDown();
+        manual.get(5, TimeUnit.SECONDS);
+        verify(webhook, never()).notifyFailure(any());
+        verify(webhook, org.mockito.Mockito.times(1)).notifyRun(any());
+    }
+
+    @Test
+    void aFailureBeforeTheRunStartsSendsNoWebhook() {
+        when(services.fetchServices()).thenThrow(new IllegalStateException("database locked"));
+
+        assertThrows(IllegalStateException.class, orchestrator::runBackup);
+
+        verify(webhook, never()).notifyFailure(any());
+        verify(webhook, never()).notifyRun(any());
+    }
+
+    @Test
+    void aFailureAfterTheRunStartsSendsAFailedWebhookAndRethrows() {
+        when(services.fetchServices()).thenReturn(List.of(RADARR));
+        when(runner.copyPaths(eq(RADARR), any(), eq(RUN_DIR), any(), any())).thenReturn(round(RADARR, COMPLETED));
+        when(archives.createArchive(RUN_DIR)).thenThrow(new IllegalStateException("disk full"));
+
+        IllegalStateException e = assertThrows(IllegalStateException.class, orchestrator::runBackup);
+
+        assertEquals("disk full", e.getMessage());
+        verify(webhook).notifyFailure("disk full");
+        verify(webhook, never()).notifyRun(any());
+    }
+
+    @Test
+    void aScheduledRunThatEndsPartialSendsAWebhook() {
+        when(schedule.dueNow()).thenReturn(true);
+        givenResults(COMPLETED, FAILED);
+
+        orchestrator.scheduledRun();
+
+        ArgumentCaptor<BackupRunResult> sent = ArgumentCaptor.forClass(BackupRunResult.class);
+        verify(webhook).notifyRun(sent.capture());
+        assertEquals(PARTIAL, sent.getValue().status());
+    }
+
+    @Test
+    void aCompletedRunStillHandsTheResultToTheWebhookService() {
+        givenResults(COMPLETED, COMPLETED);
+
+        BackupRunResult result = orchestrator.runBackup();
+
+        verify(webhook).notifyRun(result);
+        verify(webhook, never()).notifyFailure(any());
+    }
+
+    @Test
+    void aRunWhereEveryServiceFailsSendsOneFailedWebhook() {
+        givenResults(FAILED, FAILED);
+
+        assertThrows(IllegalStateException.class, orchestrator::runBackup);
+
+        ArgumentCaptor<BackupRunResult> sent = ArgumentCaptor.forClass(BackupRunResult.class);
+        verify(webhook).notifyRun(sent.capture());
+        assertEquals(FAILED, sent.getValue().status());
+        assertNull(sent.getValue().archive());
+        verify(webhook, never()).notifyFailure(any());
+    }
+
+    @Test
+    void aFailedRecordWithAnArchiveSendsAFailedWebhook() {
+        givenResults(PARTIAL, FAILED);
+
+        orchestrator.runBackup();
+
+        ArgumentCaptor<BackupRunResult> sent = ArgumentCaptor.forClass(BackupRunResult.class);
+        verify(webhook).notifyRun(sent.capture());
+        assertEquals(FAILED, sent.getValue().status());
+        assertEquals(ARCHIVE, sent.getValue().archive());
+    }
+
+    @Test
+    void aScheduledRunThatFailsDoesNotStopTheScheduler() {
+        when(schedule.dueNow()).thenReturn(true);
+        when(services.fetchServices()).thenReturn(List.of(RADARR));
+        when(runner.copyPaths(eq(RADARR), any(), eq(RUN_DIR), any(), any())).thenThrow(new IllegalStateException("crashed"));
+        when(archives.createArchive(RUN_DIR)).thenThrow(new IllegalStateException("disk full"));
+
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(orchestrator::scheduledRun);
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(orchestrator::scheduledRun);
+
+        verify(broadcaster, org.mockito.Mockito.times(2)).publishFinished(eq(FAILED), any(), any());
+        assertFalse(orchestrator.isRunning());
+    }
+
+    @Test
+    void aScheduledRunWhoseArchivingFailsDoesNotStopTheScheduler() {
+        when(schedule.dueNow()).thenReturn(true);
+        when(services.fetchServices()).thenReturn(List.of(RADARR));
+        when(runner.copyPaths(eq(RADARR), any(), eq(RUN_DIR), any(), any())).thenReturn(round(RADARR, COMPLETED));
+        when(archives.createArchive(RUN_DIR)).thenThrow(new IllegalStateException("disk full"));
+
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(orchestrator::scheduledRun);
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(orchestrator::scheduledRun);
+
+        verify(archives, org.mockito.Mockito.times(2)).createArchive(RUN_DIR);
+        verify(broadcaster, org.mockito.Mockito.times(2)).publishFinished(eq(FAILED), any(), any());
+        assertFalse(orchestrator.isRunning());
     }
 
     @Test
@@ -145,7 +319,7 @@ class BackupOrchestratorServiceTest {
         assertEquals(List.of("radarr", "sonarr", SNAPSHOT), result.serviceNames());
         result.serviceResults().forEach(r -> assertEquals("archive-1", r.runId()));
         verify(schedule).markRunStarted();
-        verify(db).addNewBackupRecord(result);
+        verify(backups).addNewBackupRecord(result);
         verify(archives).removeRunDirectory(RUN_DIR);
     }
 
@@ -157,6 +331,7 @@ class BackupOrchestratorServiceTest {
 
         assertEquals(PARTIAL, result.status());
         assertEquals("sonarr: boom", result.errorMessage());
+        verify(broadcaster).publishFinished(eq(PARTIAL), any(), any());
     }
 
     @Test
@@ -170,7 +345,7 @@ class BackupOrchestratorServiceTest {
         assertEquals(SNAPSHOT + ": boom", result.errorMessage());
         assertEquals(ARCHIVE, result.archive());
         result.serviceResults().forEach(r -> assertEquals("archive-1", r.runId()));
-        verify(db).addNewBackupRecord(result);
+        verify(backups).addNewBackupRecord(result);
     }
 
     @Test
@@ -194,7 +369,7 @@ class BackupOrchestratorServiceTest {
         assertEquals(PARTIAL, result.status());
         assertEquals(SNAPSHOT + ": docker down", result.errorMessage());
         assertEquals(ARCHIVE, result.archive());
-        verify(db).addNewBackupRecord(result);
+        verify(backups).addNewBackupRecord(result);
     }
 
     @Test
@@ -228,17 +403,18 @@ class BackupOrchestratorServiceTest {
         assertFalse(orchestrator.isRunning());
 
         ArgumentCaptor<BackupRunResult> recorded = ArgumentCaptor.forClass(BackupRunResult.class);
-        verify(db).addNewBackupRecord(recorded.capture());
+        verify(backups).addNewBackupRecord(recorded.capture());
         BackupRunResult run = recorded.getValue();
         assertEquals(FAILED, run.status());
         assertNull(run.archive());
         assertEquals("radarr: boom\nsonarr: boom", run.errorMessage());
         run.serviceResults().forEach(r -> assertEquals(run.runId(), r.runId()));
+        verify(broadcaster).publishFinished(eq(FAILED), any(), any());
     }
 
     @Test
     void runnerExceptionsBecomeFailedResults() {
-        when(db.fetchServices()).thenReturn(List.of(RADARR, SONARR));
+        when(services.fetchServices()).thenReturn(List.of(RADARR, SONARR));
         when(runner.copyPaths(eq(RADARR), any(), eq(RUN_DIR), any(), any())).thenThrow(new IllegalStateException("crashed"));
         when(runner.copyPaths(eq(SONARR), any(), eq(RUN_DIR), any(), any())).thenReturn(round(SONARR, COMPLETED));
 
@@ -256,15 +432,16 @@ class BackupOrchestratorServiceTest {
         assertThrows(IllegalStateException.class, orchestrator::runBackup);
 
         verify(archives).removeRunDirectory(RUN_DIR);
-        verify(db, never()).addNewBackupRecord(any());
+        verify(backups, never()).addNewBackupRecord(any());
         assertFalse(orchestrator.isRunning());
+        verify(broadcaster).publishFinished(eq(FAILED), any(), any());
     }
 
     @Test
     void rejectsConcurrentRuns() throws Exception {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
-        when(db.fetchServices()).thenReturn(List.of(RADARR));
+        when(services.fetchServices()).thenReturn(List.of(RADARR));
         when(runner.copyPaths(eq(RADARR), any(), any(), any(), any())).thenAnswer(invocation -> {
             started.countDown();
             release.await();
@@ -275,7 +452,7 @@ class BackupOrchestratorServiceTest {
         assertTrue(started.await(5, TimeUnit.SECONDS));
 
         assertTrue(orchestrator.isRunning());
-        assertThrows(BackupOrchestratorService.RunRejectedException.class, orchestrator::runBackup);
+        assertThrows(RunRejectedException.class, orchestrator::runBackup);
 
         release.countDown();
         assertEquals(COMPLETED, first.get(5, TimeUnit.SECONDS).status());
@@ -283,15 +460,10 @@ class BackupOrchestratorServiceTest {
     }
 
     @Test
-    void configChangesRunWhileIdle() {
-        assertEquals("changed", orchestrator.whileIdle(() -> "changed"));
-    }
-
-    @Test
     void configChangesAreRejectedDuringABackupRun() throws Exception {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
-        when(db.fetchServices()).thenReturn(List.of(RADARR));
+        when(services.fetchServices()).thenReturn(List.of(RADARR));
         when(runner.copyPaths(eq(RADARR), any(), any(), any(), any())).thenAnswer(invocation -> {
             started.countDown();
             release.await();
@@ -301,11 +473,11 @@ class BackupOrchestratorServiceTest {
         CompletableFuture<BackupRunResult> run = CompletableFuture.supplyAsync(orchestrator::runBackup);
         assertTrue(started.await(5, TimeUnit.SECONDS));
 
-        assertThrows(BackupOrchestratorService.BackupInProgressException.class, () -> orchestrator.whileIdle(() -> "changed"));
+        assertThrows(BackupInProgressException.class, () -> lifecycle.whileIdle(() -> "changed"));
 
         release.countDown();
         run.get(5, TimeUnit.SECONDS);
-        assertEquals("changed", orchestrator.whileIdle(() -> "changed"));
+        assertEquals("changed", lifecycle.whileIdle(() -> "changed"));
     }
 
     @Test
@@ -314,7 +486,7 @@ class BackupOrchestratorServiceTest {
         CountDownLatch finishChange = new CountDownLatch(1);
         givenResults(COMPLETED, COMPLETED);
 
-        CompletableFuture<String> change = CompletableFuture.supplyAsync(() -> orchestrator.whileIdle(() -> {
+        CompletableFuture<String> change = CompletableFuture.supplyAsync(() -> lifecycle.whileIdle(() -> {
             changing.countDown();
             try {
                 finishChange.await();
@@ -328,7 +500,7 @@ class BackupOrchestratorServiceTest {
         CompletableFuture<BackupRunResult> run = CompletableFuture.supplyAsync(orchestrator::runBackup);
         Thread.sleep(100);
         assertFalse(run.isDone());
-        verify(db, never()).fetchServices();
+        verify(services, never()).fetchServices();
 
         finishChange.countDown();
         assertEquals("changed", change.get(5, TimeUnit.SECONDS));
@@ -341,8 +513,8 @@ class BackupOrchestratorServiceTest {
 
         orchestrator.runBackup();
 
-        var order = inOrder(broadcaster, runner, db);
-        order.verify(db).fetchServices();
+        var order = inOrder(broadcaster, runner, services);
+        order.verify(services).fetchServices();
         order.verify(broadcaster).publishStarted(any());
         order.verify(runner, org.mockito.Mockito.atLeastOnce()).copyPaths(any(), any(), any(), any(), any());
         order.verify(broadcaster).publishFinished(eq(COMPLETED), any(), any());
@@ -351,36 +523,8 @@ class BackupOrchestratorServiceTest {
     }
 
     @Test
-    void publishesPartialWhenSomeServicesFail() {
-        givenResults(COMPLETED, FAILED);
-
-        orchestrator.runBackup();
-
-        verify(broadcaster).publishFinished(eq(PARTIAL), any(), any());
-    }
-
-    @Test
-    void publishesFailedWhenEveryServiceFails() {
-        givenResults(FAILED, FAILED);
-
-        assertThrows(IllegalStateException.class, orchestrator::runBackup);
-
-        verify(broadcaster).publishFinished(eq(FAILED), any(), any());
-    }
-
-    @Test
-    void publishesFailedWhenArchivingThrows() {
-        givenResults(COMPLETED, COMPLETED);
-        when(archives.createArchive(RUN_DIR)).thenThrow(new IllegalStateException("disk full"));
-
-        assertThrows(IllegalStateException.class, orchestrator::runBackup);
-
-        verify(broadcaster).publishFinished(eq(FAILED), any(), any());
-    }
-
-    @Test
     void publishesFailedWhenTheRunDirectoryCannotBeCreated() {
-        when(db.fetchServices()).thenReturn(List.of(RADARR));
+        when(services.fetchServices()).thenReturn(List.of(RADARR));
         when(archives.createRunDirectory()).thenThrow(new IllegalStateException("no space"));
 
         assertThrows(IllegalStateException.class, orchestrator::runBackup);
@@ -393,7 +537,7 @@ class BackupOrchestratorServiceTest {
     @Test
     void publishesFailedWhenRecordingTheRunThrows() {
         givenResults(COMPLETED, COMPLETED);
-        doThrow(new IllegalStateException("db locked")).when(db).addNewBackupRecord(any());
+        doThrow(new IllegalStateException("db locked")).when(backups).addNewBackupRecord(any());
 
         assertThrows(IllegalStateException.class, orchestrator::runBackup);
 
@@ -425,7 +569,7 @@ class BackupOrchestratorServiceTest {
         assertEquals(COMPLETED, result.status());
         assertFalse(orchestrator.isRunning());
         verify(broadcaster).publishFinished(eq(COMPLETED), any(), any());
-        assertEquals("changed", orchestrator.whileIdle(() -> "changed"));
+        assertEquals("changed", lifecycle.whileIdle(() -> "changed"));
         assertEquals(COMPLETED, orchestrator.runBackup().status());
     }
 
@@ -455,7 +599,7 @@ class BackupOrchestratorServiceTest {
     void aRejectedConcurrentRunPublishesNothingExtra() throws Exception {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
-        when(db.fetchServices()).thenReturn(List.of(RADARR));
+        when(services.fetchServices()).thenReturn(List.of(RADARR));
         when(runner.copyPaths(eq(RADARR), any(), any(), any(), any())).thenAnswer(invocation -> {
             started.countDown();
             release.await();
@@ -464,7 +608,7 @@ class BackupOrchestratorServiceTest {
 
         CompletableFuture<BackupRunResult> first = CompletableFuture.supplyAsync(orchestrator::runBackup);
         assertTrue(started.await(5, TimeUnit.SECONDS));
-        assertThrows(BackupOrchestratorService.RunRejectedException.class, orchestrator::runBackup);
+        assertThrows(RunRejectedException.class, orchestrator::runBackup);
         verify(broadcaster, org.mockito.Mockito.times(1)).publishStarted(any());
         verify(broadcaster, never()).publishFinished(any(), any(), any());
 
@@ -503,7 +647,7 @@ class BackupOrchestratorServiceTest {
     }
 
     private void givenResults(String radarrStatus, String sonarrStatus) {
-        when(db.fetchServices()).thenReturn(List.of(RADARR, SONARR));
+        when(services.fetchServices()).thenReturn(List.of(RADARR, SONARR));
         when(runner.copyPaths(eq(RADARR), any(), eq(RUN_DIR), any(), any())).thenReturn(round(RADARR, radarrStatus));
         when(runner.copyPaths(eq(SONARR), any(), eq(RUN_DIR), any(), any())).thenReturn(round(SONARR, sonarrStatus));
     }

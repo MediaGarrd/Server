@@ -230,6 +230,7 @@ class RunStatusBroadcasterTest {
             SseEmitter emitter = real.subscribe();
             assertNotNull(emitter);
             assertEquals(RunStatusBroadcaster.EMITTER_TIMEOUT_MS, emitter.getTimeout());
+            assertTrue(RunStatusBroadcaster.ROLLOVER_MS < RunStatusBroadcaster.EMITTER_TIMEOUT_MS);
         } finally {
             real.shutdown();
         }
@@ -253,8 +254,22 @@ class RunStatusBroadcasterTest {
     }
 
     @Test
-    void rolloverComesBeforeTheEmitterTimeout() {
-        assertTrue(RunStatusBroadcaster.ROLLOVER_MS < RunStatusBroadcaster.EMITTER_TIMEOUT_MS);
+    void closingAClientEndsOnlyItsStreams() throws Exception {
+        TestEmitter revoked = new TestEmitter();
+        TestEmitter other = new TestEmitter();
+        emitters.add(revoked);
+        emitters.add(other);
+        broadcaster.subscribe(revoked, "client-1");
+        broadcaster.subscribe(other, "client-2");
+        revoked.next();
+        other.next();
+
+        broadcaster.closeClient("client-1");
+
+        assertTrue(revoked.completes.await(5, TimeUnit.SECONDS));
+        awaitCount(1);
+        broadcaster.publishBackupsChanged();
+        assertTrue(other.next().startsWith("event:backups-changed"));
     }
 
     private RunStatusBroadcaster newBroadcaster(int cap, long pingMs) {

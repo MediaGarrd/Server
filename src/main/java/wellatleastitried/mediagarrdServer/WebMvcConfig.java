@@ -5,15 +5,18 @@ import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ViewControllerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
+import wellatleastitried.mediagarrdServer.api.ApiAuthInterceptor;
 import wellatleastitried.mediagarrdServer.api.SetupInterceptor;
 
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
 
     private final SetupInterceptor setupInterceptor;
+    private final ApiAuthInterceptor apiAuthInterceptor;
 
-    public WebMvcConfig(SetupInterceptor setupInterceptor) {
+    public WebMvcConfig(SetupInterceptor setupInterceptor, ApiAuthInterceptor apiAuthInterceptor) {
         this.setupInterceptor = setupInterceptor;
+        this.apiAuthInterceptor = apiAuthInterceptor;
     }
 
     @Override
@@ -23,6 +26,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(setupInterceptor);
+        registry.addInterceptor(setupInterceptor).addPathPatterns(SetupInterceptor.SETUP_PAGE_PATTERNS);
+        registry.addInterceptor(apiAuthInterceptor).addPathPatterns("/api/v1/**");
     }
 }

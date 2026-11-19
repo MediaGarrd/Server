@@ -5,27 +5,34 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static wellatleastitried.mediagarrdServer.api.ApiTestAuth.get;
+import static wellatleastitried.mediagarrdServer.api.ApiTestAuth.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.RequestBuilder;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
 import jakarta.servlet.http.Cookie;
 import wellatleastitried.mediagarrdServer.model.ServiceDefinition;
-import wellatleastitried.mediagarrdServer.service.DatabaseService;
+import wellatleastitried.mediagarrdServer.repository.ServiceRepository;
+import wellatleastitried.mediagarrdServer.service.LockedOutException;
+import wellatleastitried.mediagarrdServer.service.PairingService;
+import wellatleastitried.mediagarrdServer.service.SetupAlreadyCompleteException;
 import wellatleastitried.mediagarrdServer.service.SetupService;
 
 @WebMvcTest(SetupController.class)
@@ -34,11 +41,19 @@ class SetupControllerTest {
     @Autowired
     MockMvc mockMvc;
 
-    @MockBean
+    @MockitoBean
     SetupService setup;
 
-    @MockBean
-    DatabaseService db;
+    @MockitoBean
+    PairingService pairing;
+
+    @MockitoBean
+    ServiceRepository services;
+
+    @BeforeEach
+    void authorize() {
+        ApiTestAuth.accept(pairing);
+    }
 
     @Test
     void reportsStatusForTheCallersSession() throws Exception {
@@ -84,8 +99,18 @@ class SetupControllerTest {
     }
 
     @Test
+    void lockedPinAnswers429WithRetryAfter() throws Exception {
+        when(setup.startSession("000000")).thenThrow(new LockedOutException(Duration.ofMinutes(7)));
+
+        mockMvc.perform(pin("000000"))
+            .andExpect(status().isTooManyRequests())
+            .andExpect(header().string(HttpHeaders.RETRY_AFTER, "420"))
+            .andExpect(jsonPath("$.error").exists());
+    }
+
+    @Test
     void completeRequiresSession() throws Exception {
-        mockMvc.perform(post("/api/v1/setup/complete")).andExpect(status().isUnauthorized());
+        mockMvc.perform(MockMvcRequestBuilders.post("/api/v1/setup/complete")).andExpect(status().isUnauthorized());
 
         verify(setup, never()).complete();
     }
@@ -93,7 +118,7 @@ class SetupControllerTest {
     @Test
     void completeRequiresAtLeastOneService() throws Exception {
         when(setup.canConfigure(any())).thenReturn(true);
-        when(db.fetchServices()).thenReturn(List.of());
+        when(services.fetchServices()).thenReturn(List.of());
 
         mockMvc.perform(post("/api/v1/setup/complete"))
             .andExpect(status().isConflict())
@@ -105,13 +130,47 @@ class SetupControllerTest {
     @Test
     void completeFinishesSetupAndClearsCookie() throws Exception {
         when(setup.canConfigure(any())).thenReturn(true);
-        when(db.fetchServices()).thenReturn(List.of(new ServiceDefinition("radarr", List.of("/srv/radarr"))));
+        when(services.fetchServices()).thenReturn(List.of(new ServiceDefinition("radarr", List.of("/srv/radarr"))));
+        when(setup.complete()).thenReturn("123456");
 
         mockMvc.perform(post("/api/v1/setup/complete"))
-            .andExpect(status().isNoContent())
-            .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")));
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.pairingPin").value("123456"))
+            .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Max-Age=0")))
+            .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"));
 
         verify(setup).complete();
+    }
+
+    @Test
+    void completeAnswersAnExplicitNullPinWhenNoPinApplies() throws Exception {
+        when(setup.canConfigure(any())).thenReturn(true);
+        when(services.fetchServices()).thenReturn(List.of(new ServiceDefinition("radarr", List.of("/srv/radarr"))));
+        when(setup.complete()).thenReturn(null);
+
+        mockMvc.perform(post("/api/v1/setup/complete"))
+            .andExpect(status().isOk())
+            .andExpect(content().json("{\"pairingPin\":null}", true));
+    }
+
+    @Test
+    void completeIsGoneWhenARacingRequestCompletedFirst() throws Exception {
+        when(setup.canConfigure(any())).thenReturn(true);
+        when(services.fetchServices()).thenReturn(List.of(new ServiceDefinition("radarr", List.of("/srv/radarr"))));
+        when(setup.complete()).thenThrow(new SetupAlreadyCompleteException());
+
+        mockMvc.perform(post("/api/v1/setup/complete")).andExpect(status().isGone());
+    }
+
+    @Test
+    void completeIsAGenericServerErrorWhenSavingFails() throws Exception {
+        when(setup.canConfigure(any())).thenReturn(true);
+        when(services.fetchServices()).thenReturn(List.of(new ServiceDefinition("radarr", List.of("/srv/radarr"))));
+        when(setup.complete()).thenThrow(new IllegalStateException("Failed to save setting"));
+
+        mockMvc.perform(post("/api/v1/setup/complete"))
+            .andExpect(status().isInternalServerError())
+            .andExpect(jsonPath("$.error").value("Internal error"));
     }
 
     @Test
@@ -135,7 +194,19 @@ class SetupControllerTest {
         mockMvc.perform(get("/js/config.js")).andExpect(status().isNotFound());
     }
 
-    private static RequestBuilder pin(String pin) {
+    private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder pin(String pin) {
         return post("/api/v1/setup/session").contentType(MediaType.APPLICATION_JSON).content("{\"pin\": \"" + pin + "\"}");
+    }
+
+    @Test
+    void theSessionCookieIsSecureOnlyOverHttps() throws Exception {
+        when(setup.startSession("123456")).thenReturn(Optional.of("token"));
+
+        mockMvc.perform(pin("123456"))
+            .andExpect(header().string(HttpHeaders.SET_COOKIE, org.hamcrest.Matchers.not(containsString("Secure"))));
+        mockMvc.perform(pin("123456").header("X-Forwarded-Proto", "https"))
+            .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Secure")));
+        mockMvc.perform(pin("123456").secure(true))
+            .andExpect(header().string(HttpHeaders.SET_COOKIE, containsString("Secure")));
     }
 }

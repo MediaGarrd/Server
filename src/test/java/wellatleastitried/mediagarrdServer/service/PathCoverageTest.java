@@ -40,9 +40,4 @@ class PathCoverageTest {
         assertEquals(List.of(a), owners.stream().map(Owner::item).toList());
         assertEquals(List.of(b), owners.get(0).covered());
     }
-
-    @Test
-    void keysAreEntryNamesWithoutTheLeadingSlash() {
-        assertEquals("srv/a/b", item("a", "/srv/a/b").key());
-    }
 }

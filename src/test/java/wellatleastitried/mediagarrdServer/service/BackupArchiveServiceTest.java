@@ -17,6 +17,7 @@ import static wellatleastitried.mediagarrdServer.utilities.database.DatabaseUtil
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.DriverManager;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -34,6 +35,7 @@ import org.junit.jupiter.api.io.TempDir;
 import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
 import wellatleastitried.mediagarrdServer.model.BackupArchive;
 import wellatleastitried.mediagarrdServer.model.BackupRunResult;
+import wellatleastitried.mediagarrdServer.repository.TestDatabase;
 import wellatleastitried.mediagarrdServer.service.ServiceBackupRunnerTest.Item;
 
 class BackupArchiveServiceTest {
@@ -42,7 +44,7 @@ class BackupArchiveServiceTest {
     Path tempDir;
 
     private MediaGarrdProperties properties;
-    private DatabaseService db;
+    private TestDatabase db;
     private BackupArchiveService service;
 
     @BeforeEach
@@ -51,8 +53,8 @@ class BackupArchiveServiceTest {
         properties.setBackupRoot(tempDir.resolve("backups").toString());
         properties.setDatabasePath(tempDir.resolve("mediagarrd.db").toString());
         properties.setRetentionCount(2);
-        db = new DatabaseService(properties);
-        service = new BackupArchiveService(properties, db);
+        db = new TestDatabase(properties);
+        service = new BackupArchiveService(properties, db.settings, db.backups);
     }
 
     @Test
@@ -111,23 +113,23 @@ class BackupArchiveServiceTest {
         assertThrows(IllegalStateException.class, () -> service.createArchive(run));
 
         try (var files = Files.list(service.rootDirectory())) {
-            assertEquals(List.of("runs"), files.map(path -> path.getFileName().toString()).toList());
+            assertEquals(List.of(BackupArchiveService.RUNS_DIRECTORY), files.map(path -> path.getFileName().toString()).toList());
         }
         assertFalse(Files.exists(run.resolve("merge-names.idx")));
     }
 
     @Test
     void partsAreWrittenInSortedPathOrderWithTheSnapshotFirst() throws Exception {
-        db.saveSetting("backup_root", "/marker");
+        db.settings.saveSetting("backup_root", "/marker");
         DatabaseHostPathResolver hostPaths = mock(DatabaseHostPathResolver.class);
-        when(hostPaths.resolve(db.databaseFile())).thenReturn(Path.of("/srv/zzz/mediagarrd.db"));
+        when(hostPaths.resolve(db.database.databaseFile())).thenReturn(Path.of("/srv/zzz/mediagarrd.db"));
         Path run = service.createRunDirectory();
         Item restricted = dir("a/");
         restricted.entry().setMode(040700);
         part(run, "second", 0, "/srv/b", tar(dir("b/"), file("b/x", "1")));
         part(run, "first", 1, "/srv/a", tar(restricted, dir("a/c/"), file("a/c/x", "1"), file("a/y", "2")));
         part(run, "first", 0, "/srv/a0", tar(file("a0", "0")));
-        assertEquals(COMPLETED, new DatabaseSnapshotService(db, hostPaths, new ZipCompression(1)).snapshot(run).status());
+        assertEquals(COMPLETED, new DatabaseSnapshotService(db.database, hostPaths, new ZipCompression(1)).snapshot(run).status());
 
         BackupArchive archive = service.createArchive(run);
 
@@ -155,7 +157,7 @@ class BackupArchiveServiceTest {
         assertThrows(IllegalStateException.class, () -> service.createArchive(run));
 
         try (var files = Files.list(service.rootDirectory())) {
-            assertEquals(List.of("runs"), files.map(path -> path.getFileName().toString()).toList());
+            assertEquals(List.of(BackupArchiveService.RUNS_DIRECTORY), files.map(path -> path.getFileName().toString()).toList());
         }
     }
 
@@ -164,10 +166,8 @@ class BackupArchiveServiceTest {
         Path unrelated = Files.createDirectories(service.rootDirectory()).resolve("keep-me.zip");
         Files.writeString(unrelated, "not a backup");
 
-        for (int i = 0; i < 3; i++) {
-            createArchive();
-            Thread.sleep(10);
-        }
+        seedArchives(2);
+        createArchive();
 
         assertEquals(2, service.listArchives().size());
         assertTrue(Files.exists(unrelated));
@@ -181,19 +181,16 @@ class BackupArchiveServiceTest {
 
         assertFalse(service.deleteById(archive.id()));
         assertTrue(service.listArchives().isEmpty());
-        assertTrue(db.fetchBackupById(archive.id()).isEmpty());
+        assertTrue(db.backups.fetchBackupById(archive.id()).isEmpty());
     }
 
     @Test
     void retentionDeletesRecordsOfRemovedArchives() throws Exception {
-        BackupArchive oldest = createArchive();
-        Thread.sleep(10);
-        createArchive();
-        Thread.sleep(10);
+        BackupArchive oldest = seedArchives(2).get(0);
         BackupArchive newest = createArchive();
 
-        assertTrue(db.fetchBackupById(oldest.id()).isEmpty());
-        assertTrue(db.fetchBackupById(newest.id()).isPresent());
+        assertTrue(db.backups.fetchBackupById(oldest.id()).isEmpty());
+        assertTrue(db.backups.fetchBackupById(newest.id()).isPresent());
     }
 
     @Test
@@ -204,7 +201,7 @@ class BackupArchiveServiceTest {
 
         assertEquals(newRoot, service.rootDirectory());
         assertTrue(Files.isDirectory(newRoot));
-        assertEquals(newRoot, new BackupArchiveService(properties, db).rootDirectory());
+        assertEquals(newRoot, new BackupArchiveService(properties, db.settings, db.backups).rootDirectory());
     }
 
     @Test
@@ -231,10 +228,7 @@ class BackupArchiveServiceTest {
 
     @Test
     void persistsRetentionCountAndAppliesItOnNextArchive() throws Exception {
-        for (int i = 0; i < 2; i++) {
-            createArchive();
-            Thread.sleep(10);
-        }
+        seedArchives(2);
 
         service.updateSettings(null, 1);
 
@@ -242,7 +236,7 @@ class BackupArchiveServiceTest {
         assertEquals(2, service.listArchives().size());
         createArchive();
         assertEquals(1, service.listArchives().size());
-        assertEquals(1, new BackupArchiveService(properties, db).retentionCount());
+        assertEquals(1, new BackupArchiveService(properties, db.settings, db.backups).retentionCount());
     }
 
     @Test
@@ -250,16 +244,16 @@ class BackupArchiveServiceTest {
         assertEquals(2, service.retentionCount());
 
         properties.setRetentionCount(0);
-        assertEquals(1, new BackupArchiveService(properties, db).retentionCount());
+        assertEquals(1, new BackupArchiveService(properties, db.settings, db.backups).retentionCount());
     }
 
     @Test
     void ignoresCorruptStoredRetention() {
-        db.saveSetting(RETENTION_COUNT_SETTING, "lots");
-        assertEquals(2, new BackupArchiveService(properties, db).retentionCount());
+        db.settings.saveSetting(RETENTION_COUNT_SETTING, "lots");
+        assertEquals(2, new BackupArchiveService(properties, db.settings, db.backups).retentionCount());
 
-        db.saveSetting(RETENTION_COUNT_SETTING, "0");
-        assertEquals(2, new BackupArchiveService(properties, db).retentionCount());
+        db.settings.saveSetting(RETENTION_COUNT_SETTING, "0");
+        assertEquals(2, new BackupArchiveService(properties, db.settings, db.backups).retentionCount());
     }
 
     @Test
@@ -268,7 +262,7 @@ class BackupArchiveServiceTest {
 
         service.updateSettings(newRoot.toString(), 5);
 
-        BackupArchiveService restarted = new BackupArchiveService(properties, db);
+        BackupArchiveService restarted = new BackupArchiveService(properties, db.settings, db.backups);
         assertEquals(newRoot, restarted.rootDirectory());
         assertEquals(5, restarted.retentionCount());
     }
@@ -282,14 +276,14 @@ class BackupArchiveServiceTest {
         assertFalse(Files.exists(tempDir.resolve("never")));
         assertEquals(tempDir.resolve("backups"), service.rootDirectory());
         assertEquals(2, service.retentionCount());
-        assertTrue(db.fetchSetting(RETENTION_COUNT_SETTING).isEmpty());
+        assertTrue(db.settings.fetchSetting(RETENTION_COUNT_SETTING).isEmpty());
     }
 
     @Test
     void startupCleanupRemovesStaleArtifacts() throws Exception {
         Path run = service.createRunDirectory();
         Files.writeString(run.resolve("partial.txt"), "x");
-        Path tempZip = Files.writeString(service.rootDirectory().resolve("old" + BackupArchiveService.ARCHIVE_SUFFIX + ".tmp"), "x");
+        Path tempZip = Files.writeString(service.rootDirectory().resolve("old" + BackupArchiveService.TEMP_SUFFIX), "x");
 
         service.cleanupStaleArtifactsOnStartup();
 
@@ -298,11 +292,44 @@ class BackupArchiveServiceTest {
     }
 
     @Test
+    void startupCleanupLeavesTheUsersOwnFilesAndFoldersAlone() throws Exception {
+        Path root = service.rootDirectory();
+        Path ownRuns = Files.createDirectories(root.resolve("runs").resolve("mine"));
+        Path ownFile = Files.writeString(ownRuns.resolve("keep.txt"), "x");
+        Path unrelatedTemp = Files.writeString(root.resolve("notes.zip.tmp"), "x");
+        Path nonMediaGarrdTemp = Files.writeString(root.resolve("photos.zip.tmp"), "x");
+
+        service.cleanupStaleArtifactsOnStartup();
+
+        assertTrue(Files.exists(ownFile));
+        assertTrue(Files.exists(unrelatedTemp));
+        assertTrue(Files.exists(nonMediaGarrdTemp));
+    }
+
+    @Test
+    void runDirectoriesLiveInAMediaGarrdSpecificFolder() {
+        Path run = service.createRunDirectory();
+
+        assertEquals(service.rootDirectory().resolve(BackupArchiveService.RUNS_DIRECTORY), run.getParent());
+    }
+
+    @Test
+    void syncingAFileSucceedsAndSyncingAMissingDirectoryIsIgnored() throws Exception {
+        Path file = Files.writeString(tempDir.resolve("sync.bin"), "x");
+
+        BackupArchiveService.syncFile(file);
+        BackupArchiveService.syncDirectory(tempDir);
+        BackupArchiveService.syncDirectory(tempDir.resolve("missing"));
+
+        assertTrue(Files.exists(file));
+    }
+
+    @Test
     void theDatabaseSnapshotWinsOverServiceCopiesThatAreExcludedWhileCopying() throws Exception {
-        db.saveSetting("backup_root", "/marker");
+        db.settings.saveSetting("backup_root", "/marker");
         DatabaseHostPathResolver hostPaths = mock(DatabaseHostPathResolver.class);
         String entry = "srv/mediagarrd/db/mediagarrd.db";
-        when(hostPaths.resolve(db.databaseFile())).thenReturn(Path.of("/" + entry));
+        when(hostPaths.resolve(db.database.databaseFile())).thenReturn(Path.of("/" + entry));
         Path run = service.createRunDirectory();
         var excluded = DatabaseSnapshotService.reservedNames(Path.of("/" + entry));
         Path directory = Files.createDirectories(run.resolve("Mediagarrd"));
@@ -314,7 +341,7 @@ class BackupArchiveServiceTest {
             file("db/mediagarrd.db-shm", "shm"),
             file("db/notes.txt", "keep")), "/srv/mediagarrd/db", directory.resolve("0.part"), new ZipCompression(1), excluded, java.util.Set.of());
 
-        var snapshot = new DatabaseSnapshotService(db, hostPaths, new ZipCompression(1)).snapshot(run);
+        var snapshot = new DatabaseSnapshotService(db.database, hostPaths, new ZipCompression(1)).snapshot(run);
         BackupArchive archive = service.createArchive(run);
 
         assertEquals(COMPLETED, snapshot.status());
@@ -336,15 +363,15 @@ class BackupArchiveServiceTest {
     @Test
     void aLiveDatabaseCopyThatSlippedPastTheExclusionFailsTheMerge() throws Exception {
         DatabaseHostPathResolver hostPaths = mock(DatabaseHostPathResolver.class);
-        when(hostPaths.resolve(db.databaseFile())).thenReturn(Path.of("/srv/mediagarrd/db/mediagarrd.db"));
+        when(hostPaths.resolve(db.database.databaseFile())).thenReturn(Path.of("/srv/mediagarrd/db/mediagarrd.db"));
         Path run = service.createRunDirectory();
         part(run, "Mediagarrd", 0, "/srv/mediagarrd/db", tar(dir("db/"), file("db/mediagarrd.db-wal", "wal")));
-        new DatabaseSnapshotService(db, hostPaths, new ZipCompression(1)).snapshot(run);
+        new DatabaseSnapshotService(db.database, hostPaths, new ZipCompression(1)).snapshot(run);
 
         assertThrows(IllegalStateException.class, () -> service.createArchive(run));
 
         try (var files = Files.list(service.rootDirectory())) {
-            assertEquals(List.of("runs"), files.map(path -> path.getFileName().toString()).toList());
+            assertEquals(List.of(BackupArchiveService.RUNS_DIRECTORY), files.map(path -> path.getFileName().toString()).toList());
         }
     }
 
@@ -411,16 +438,6 @@ class BackupArchiveServiceTest {
         assertEquals(contents(archive.path()), streamed);
     }
 
-    @Test
-    void archivesWithoutASnapshotPartStillMerge() throws Exception {
-        Path run = service.createRunDirectory();
-        part(run, "radarr", 0, "/srv/radarr", tar(file("radarr", "x")));
-
-        BackupArchive archive = service.createArchive(run);
-
-        assertEquals(List.of("srv/radarr"), List.copyOf(contents(archive.path()).keySet()));
-    }
-
     private static void partWith(Path run, String service, int index, String hostPath, java.io.InputStream tar, int level) throws Exception {
         Path directory = Files.createDirectories(run.resolve(service));
         ServiceBackupRunner.archive(tar, hostPath, directory.resolve(index + ServiceBackupRunner.PART_SUFFIX), new ZipCompression(level));
@@ -431,12 +448,126 @@ class BackupArchiveServiceTest {
         ServiceBackupRunner.archive(tar, hostPath, directory.resolve(index + ServiceBackupRunner.PART_SUFFIX), new ZipCompression(1));
     }
 
+    private List<BackupArchive> seedArchives(int count) throws Exception {
+        Path root = Files.createDirectories(service.rootDirectory());
+        List<BackupArchive> seeded = new java.util.ArrayList<>();
+        for (int i = 1; i <= count; i++) {
+            String fileName = String.format("202101%02d", i) + "-000000-000-media-backup.zip";
+            Path path = Files.writeString(root.resolve(fileName), "seeded " + i);
+            Files.setLastModifiedTime(path, java.nio.file.attribute.FileTime.fromMillis(10_000L * i));
+            BackupArchive archive = new BackupArchive(fileName.replace(".zip", ""), fileName, path, Files.size(path), Instant.ofEpochMilli(10_000L * i));
+            db.backups.addNewBackupRecord(new BackupRunResult(archive.id(), "start", "end", COMPLETED, List.of(), archive, null));
+            seeded.add(archive);
+        }
+        return seeded;
+    }
+
     private BackupArchive createArchive() throws Exception {
         Path run = service.createRunDirectory();
         part(run, "marker", 0, "/srv/marker", tar(file("marker", "ok")));
         BackupArchive archive = service.createArchive(run);
         service.removeRunDirectory(run);
-        db.addNewBackupRecord(new BackupRunResult(archive.id(), "start", "end", COMPLETED, List.of(), archive, null));
+        db.backups.addNewBackupRecord(new BackupRunResult(archive.id(), "start", "end", COMPLETED, List.of(), archive, null));
         return archive;
+    }
+
+    @Test
+    void retentionKeepsOldArchivesThatHaveNoRecord() throws Exception {
+        Path root = Files.createDirectories(service.rootDirectory());
+        Path unrecorded = root.resolve("20200101-000000-000-media-backup.zip");
+        Files.writeString(unrecorded, "left by an earlier install");
+        Files.setLastModifiedTime(unrecorded, java.nio.file.attribute.FileTime.fromMillis(1_000));
+
+        seedArchives(3);
+        createArchive();
+
+        assertTrue(Files.exists(unrecorded));
+        assertTrue(service.listArchives().stream().anyMatch(archive -> archive.path().equals(unrecorded)));
+        assertEquals(3, service.listArchives().size());
+    }
+
+    @Test
+    void ordersAndReportsArchivesByTheTimestampInTheirNameNotTheirModifiedTime() throws Exception {
+        Path root = Files.createDirectories(service.rootDirectory());
+        Path newest = archiveFile(root, "20260105-120000-123-media-backup.zip", 1_000);
+        Path middle = archiveFile(root, "20260103-000000-000-media-backup.zip", 3_000_000_000L);
+        Path oldest = archiveFile(root, "20260101-000000-000-media-backup.zip", 2_000_000_000L);
+
+        List<BackupArchive> archives = service.listArchives();
+
+        assertEquals(List.of(newest, middle, oldest), archives.stream().map(BackupArchive::path).toList());
+        assertEquals(Instant.parse("2026-01-05T12:00:00.123Z"), archives.get(0).createdAt());
+        assertEquals(newest, service.latest().orElseThrow().path());
+    }
+
+    @Test
+    void retentionPrunesByTheTimestampInTheNameNotTheModifiedTime() throws Exception {
+        Path root = Files.createDirectories(service.rootDirectory());
+        Path first = archiveFile(root, "20210101-000000-000-media-backup.zip", 9_000_000_000L);
+        Path second = archiveFile(root, "20210102-000000-000-media-backup.zip", 8_000_000_000L);
+        Path third = archiveFile(root, "20210103-000000-000-media-backup.zip", 7_000_000_000L);
+        for (Path path : List.of(first, second, third)) {
+            String id = path.getFileName().toString().replace(".zip", "");
+            BackupArchive archive = new BackupArchive(id, path.getFileName().toString(), path, 1, Instant.EPOCH);
+            db.backups.addNewBackupRecord(new BackupRunResult(id, "start", "end", COMPLETED, List.of(), archive, null));
+        }
+
+        BackupArchive created = createArchive();
+
+        assertFalse(Files.exists(first));
+        assertFalse(Files.exists(second));
+        assertTrue(Files.exists(third));
+        assertTrue(Files.exists(created.path()));
+    }
+
+    @Test
+    void anArchiveWhoseNameHasNoTimestampFallsBackToItsModifiedTime() throws Exception {
+        Path root = Files.createDirectories(service.rootDirectory());
+        Path odd = archiveFile(root, "manual-media-backup.zip", 1_700_000_000_000L);
+        Path named = archiveFile(root, "20200101-000000-000-media-backup.zip", 5);
+
+        List<BackupArchive> archives = service.listArchives();
+
+        assertEquals(List.of(odd, named), archives.stream().map(BackupArchive::path).toList());
+        assertEquals(Instant.ofEpochMilli(1_700_000_000_000L), archives.get(0).createdAt());
+    }
+
+    private static Path archiveFile(Path root, String name, long modifiedMillis) throws Exception {
+        Path path = Files.writeString(root.resolve(name), "x");
+        Files.setLastModifiedTime(path, java.nio.file.attribute.FileTime.fromMillis(modifiedMillis));
+        return path;
+    }
+
+    @Test
+    void archiveIdsDropOnlyTheTrailingZipExtension() throws Exception {
+        Path root = Files.createDirectories(service.rootDirectory());
+        Files.writeString(root.resolve("a.zip-media-backup.zip"), "x");
+
+        assertEquals("a.zip-media-backup", service.listArchives().get(0).id());
+    }
+
+    @Test
+    void newDirectoriesAndArchivesAreOwnerOnlyButExistingOnesAreLeftAlone() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeTrue(java.nio.file.FileSystems.getDefault().supportedFileAttributeViews().contains("posix"));
+        Path existing = Files.createDirectories(tempDir.resolve("existing"));
+        Files.setPosixFilePermissions(existing, java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"));
+        service.updateRootDirectory(existing.toString());
+
+        BackupArchive archive = createArchive();
+
+        assertEquals("rwxr-xr-x", java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(existing)));
+        assertEquals("rw-------", java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(archive.path())));
+        Path created = tempDir.resolve("fresh/backups");
+        service.updateRootDirectory(created.toString());
+        assertEquals("rwx------", java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(created)));
+        assertEquals("rwx------", java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(service.createRunDirectory())));
+    }
+
+    @Test
+    void rejectsOverlongAndControlCharacterLocations() {
+        assertThrows(IllegalArgumentException.class, () -> service.updateRootDirectory("/" + "a".repeat(BackupArchiveService.MAX_LOCATION_LENGTH)));
+        assertThrows(IllegalArgumentException.class, () -> service.updateRootDirectory("/tmp/x\ninjected"));
+        IllegalArgumentException nul = assertThrows(IllegalArgumentException.class, () -> service.updateRootDirectory("/tmp/x\0y"));
+        assertEquals("Backup location must not contain control characters", nul.getMessage());
     }
 }

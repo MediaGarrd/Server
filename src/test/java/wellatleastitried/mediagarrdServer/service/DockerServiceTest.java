@@ -2,6 +2,7 @@ package wellatleastitried.mediagarrdServer.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
@@ -22,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import com.github.dockerjava.api.DockerClient;
+import com.github.dockerjava.api.command.CopyArchiveFromContainerCmd;
 import com.github.dockerjava.api.command.CreateContainerCmd;
 import com.github.dockerjava.api.command.CreateContainerResponse;
 import com.github.dockerjava.api.command.InspectImageCmd;
@@ -158,8 +160,13 @@ class DockerServiceTest {
     }
 
     @Test
-    void mapsHostPathsUnderMountRoot() {
-        assertEquals("/mnt/srv/radarr/config", DockerService.containerPath("/srv/radarr/config"));
+    void copyFromStreamsTheTarFromTheHelperContainerUnderTheMountRoot() {
+        CopyArchiveFromContainerCmd copyCmd = mock(CopyArchiveFromContainerCmd.class);
+        java.io.InputStream tar = new java.io.ByteArrayInputStream(new byte[] {1, 2, 3});
+        when(client.copyArchiveFromContainerCmd("cid", "/mnt/srv/radarr/config")).thenReturn(copyCmd);
+        when(copyCmd.exec()).thenReturn(tar);
+
+        assertSame(tar, docker.copyFrom("cid", "/srv/radarr/config"));
     }
 
     private static Container container(String id, String hash) {
@@ -175,5 +182,20 @@ class DockerServiceTest {
 
     private static String describe(Mount mount) {
         return mount.getType() + " " + mount.getSource() + " -> " + mount.getTarget() + " ro=" + mount.getReadOnly();
+    }
+
+    @Test
+    void removesEveryStaleContainerEvenWhenAMatchingOneComesFirst() {
+        Container match = container("match", docker.configHash(RADARR));
+        Container staleAfter = container("stale-after", "old-hash");
+        Container staleBefore = container("stale-before", "older-hash");
+        when(listCmd.exec()).thenReturn(List.of(staleBefore, match, staleAfter));
+
+        assertEquals("match", docker.containerFor(RADARR));
+
+        verify(client).removeContainerCmd("stale-before");
+        verify(client).removeContainerCmd("stale-after");
+        verify(client, never()).removeContainerCmd("match");
+        verify(client, never()).createContainerCmd(anyString());
     }
 }

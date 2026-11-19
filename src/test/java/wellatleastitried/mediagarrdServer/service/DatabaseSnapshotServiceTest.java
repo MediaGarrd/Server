@@ -26,6 +26,7 @@ import org.junit.jupiter.api.io.TempDir;
 import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
 import wellatleastitried.mediagarrdServer.model.BackupServiceResult;
 import wellatleastitried.mediagarrdServer.model.ServiceDefinition;
+import wellatleastitried.mediagarrdServer.repository.TestDatabase;
 
 class DatabaseSnapshotServiceTest {
 
@@ -34,7 +35,7 @@ class DatabaseSnapshotServiceTest {
     @TempDir
     Path tempDir;
 
-    private DatabaseService db;
+    private TestDatabase db;
     private DatabaseHostPathResolver hostPaths;
     private DatabaseSnapshotService snapshots;
     private Path run;
@@ -43,19 +44,19 @@ class DatabaseSnapshotServiceTest {
     void setUp() throws Exception {
         MediaGarrdProperties properties = new MediaGarrdProperties();
         properties.setDatabasePath(tempDir.resolve("db/mediagarrd.db").toString());
-        db = new DatabaseService(properties);
+        db = new TestDatabase(properties);
         hostPaths = mock(DatabaseHostPathResolver.class);
-        when(hostPaths.resolve(db.databaseFile())).thenReturn(HOST_DATABASE);
-        snapshots = new DatabaseSnapshotService(db, hostPaths, new ZipCompression(1));
+        when(hostPaths.resolve(db.database.databaseFile())).thenReturn(HOST_DATABASE);
+        snapshots = new DatabaseSnapshotService(db.database, hostPaths, new ZipCompression(1));
         run = Files.createDirectories(tempDir.resolve("run"));
     }
 
     @Test
     void writesTheSnapshotAtTheHostPathWithTheLiveFileMetadata() throws Exception {
-        db.addService(new ServiceDefinition("radarr", List.of("/srv/radarr")));
-        Files.setPosixFilePermissions(db.databaseFile(), PosixFilePermissions.fromString("rw-r-----"));
-        Integer uid = (Integer) Files.getAttribute(db.databaseFile(), "unix:uid");
-        Integer gid = (Integer) Files.getAttribute(db.databaseFile(), "unix:gid");
+        db.services.addService(new ServiceDefinition("radarr", List.of("/srv/radarr")));
+        Files.setPosixFilePermissions(db.database.databaseFile(), PosixFilePermissions.fromString("rw-r-----"));
+        Integer uid = (Integer) Files.getAttribute(db.database.databaseFile(), "unix:uid");
+        Integer gid = (Integer) Files.getAttribute(db.database.databaseFile(), "unix:gid");
 
         BackupServiceResult result = snapshots.snapshot(run);
 
@@ -83,7 +84,7 @@ class DatabaseSnapshotServiceTest {
 
     @Test
     void failsWithoutAPartWhenTheHostPathCannotBeResolved() throws Exception {
-        when(hostPaths.resolve(db.databaseFile())).thenThrow(new IOException("no mount covers the database"));
+        when(hostPaths.resolve(db.database.databaseFile())).thenThrow(new IOException("no mount covers the database"));
 
         BackupServiceResult result = snapshots.snapshot(run);
 
@@ -94,30 +95,30 @@ class DatabaseSnapshotServiceTest {
 
     @Test
     void failsWithoutAPartWhenTheDatabaseIsMissing() throws Exception {
-        Files.delete(db.databaseFile());
+        Files.delete(db.database.databaseFile());
 
         BackupServiceResult result = snapshots.snapshot(run);
 
         assertEquals(FAILED, result.status());
-        assertEquals("Database file " + db.databaseFile() + " does not exist", result.errorMessage());
-        assertFalse(Files.exists(db.databaseFile()));
+        assertEquals("Database file " + db.database.databaseFile() + " does not exist", result.errorMessage());
+        assertFalse(Files.exists(db.database.databaseFile()));
         assertNoPart();
     }
 
     @Test
     void failsWithoutAPartWhenTheDatabaseIsCorrupt() throws Exception {
-        Files.writeString(db.databaseFile(), "x".repeat(4096));
+        Files.writeString(db.database.databaseFile(), "x".repeat(4096));
 
         BackupServiceResult result = snapshots.snapshot(run);
 
         assertEquals(FAILED, result.status());
-        assertEquals("x".repeat(4096), Files.readString(db.databaseFile()));
+        assertEquals("x".repeat(4096), Files.readString(db.database.databaseFile()));
         assertNoPart();
     }
 
     @Test
     void resolverFailuresOfAnyKindBecomeAFailedResult() throws Exception {
-        when(hostPaths.resolve(db.databaseFile())).thenThrow(new IllegalStateException("docker down"));
+        when(hostPaths.resolve(db.database.databaseFile())).thenThrow(new IllegalStateException("docker down"));
 
         assertEquals("docker down", snapshots.snapshot(run).errorMessage());
     }

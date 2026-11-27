@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
@@ -51,8 +52,17 @@ public class SqliteDatabase {
     }
 
     @PreDestroy
-    void shutdownRebuildNotifier() {
-        rebuildNotifier.shutdownNow();
+    public void shutdownRebuildNotifier() {
+        rebuildNotifier.shutdown();
+        try {
+            if (!rebuildNotifier.awaitTermination(5, TimeUnit.SECONDS)) {
+                rebuildNotifier.shutdownNow();
+                rebuildNotifier.awaitTermination(2, TimeUnit.SECONDS);
+            }
+        } catch (InterruptedException e) {
+            rebuildNotifier.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     @FunctionalInterface

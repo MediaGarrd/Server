@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BooleanSupplier;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -51,6 +52,11 @@ class DatabaseRebuildHandlerTest {
         archives = new BackupArchiveService(properties, db.settings, db.backups);
         schedule = new BackupScheduleService(properties, db.settings, db.backups, setup, clock);
         new DatabaseRebuildHandler(db.database, pairing, broadcaster, archives, schedule);
+    }
+
+    @AfterEach
+    void drainRebuildNotifier() {
+        db.database.shutdownRebuildNotifier();
     }
 
     private void corruptWhileRunning() throws Exception {

@@ -62,11 +62,19 @@ public class RunStatusBroadcaster {
     }
 
     public SseEmitter subscribe() {
-        return subscribe(new SseEmitter(emitterTimeoutMs));
+        return subscribe(new SseEmitter(emitterTimeoutMs), null);
+    }
+
+    public SseEmitter subscribe(String clientId) {
+        return subscribe(new SseEmitter(emitterTimeoutMs), clientId);
     }
 
     SseEmitter subscribe(SseEmitter emitter) {
-        Subscriber subscriber = new Subscriber(emitter);
+        return subscribe(emitter, null);
+    }
+
+    SseEmitter subscribe(SseEmitter emitter, String clientId) {
+        Subscriber subscriber = new Subscriber(emitter, clientId);
         synchronized (lock) {
             if (shutdown || subscribers.size() >= maxSubscribers) {
                 throw new SubscriberLimitException("Too many event stream subscribers");
@@ -119,6 +127,24 @@ public class RunStatusBroadcaster {
         }
     }
 
+    public void closeClient(String clientId) {
+        List<Subscriber> toClose;
+        synchronized (lock) {
+            toClose = subscribers.stream().filter(subscriber -> clientId.equals(subscriber.clientId)).toList();
+            subscribers.removeAll(toClose);
+        }
+        toClose.forEach(Subscriber::close);
+    }
+
+    public void closeAll() {
+        List<Subscriber> toClose;
+        synchronized (lock) {
+            toClose = new ArrayList<>(subscribers);
+            subscribers.clear();
+        }
+        toClose.forEach(Subscriber::close);
+    }
+
     int subscriberCount() {
         synchronized (lock) {
             return subscribers.size();
@@ -152,12 +178,14 @@ public class RunStatusBroadcaster {
     private final class Subscriber {
 
         private final SseEmitter emitter;
+        private final String clientId;
         private final BlockingQueue<Message> queue = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
         private final AtomicBoolean closed = new AtomicBoolean();
         private final AtomicBoolean ended = new AtomicBoolean();
 
-        Subscriber(SseEmitter emitter) {
+        Subscriber(SseEmitter emitter, String clientId) {
             this.emitter = emitter;
+            this.clientId = clientId;
         }
 
         void close() {

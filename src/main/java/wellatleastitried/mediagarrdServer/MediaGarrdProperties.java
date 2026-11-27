@@ -21,4 +21,5 @@ public class MediaGarrdProperties {
     private String updateRepository = "MediaGarrd/Server";
     private String githubApiBaseUrl = "https://api.github.com";
     private Duration updateCheckInterval = Duration.ofHours(24);
+    private boolean openPairing = false;
 }

@@ -17,6 +17,7 @@ public class VersionController {
         this.updateCheckService = updateCheckService;
     }
 
+    @PublicEndpoint
     @GetMapping("/version")
     public VersionStatusDto version() {
         return updateCheckService.status();

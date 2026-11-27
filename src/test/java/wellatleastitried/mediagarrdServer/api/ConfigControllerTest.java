@@ -9,10 +9,11 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static wellatleastitried.mediagarrdServer.api.ApiTestAuth.delete;
+import static wellatleastitried.mediagarrdServer.api.ApiTestAuth.get;
+import static wellatleastitried.mediagarrdServer.api.ApiTestAuth.post;
+import static wellatleastitried.mediagarrdServer.api.ApiTestAuth.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -25,21 +26,30 @@ import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
+import jakarta.servlet.http.Cookie;
 import wellatleastitried.mediagarrdServer.model.ServiceDefinition;
+import wellatleastitried.mediagarrdServer.repository.ServiceRepository;
 import wellatleastitried.mediagarrdServer.service.BackupArchiveService;
+import wellatleastitried.mediagarrdServer.service.BackupInProgressException;
 import wellatleastitried.mediagarrdServer.service.BackupOrchestratorService;
-import wellatleastitried.mediagarrdServer.service.DatabaseService;
+import wellatleastitried.mediagarrdServer.service.BackupRunLifecycle;
 import wellatleastitried.mediagarrdServer.service.DockerService;
+import wellatleastitried.mediagarrdServer.service.PairingService;
 import wellatleastitried.mediagarrdServer.service.RunStatusBroadcaster;
+import wellatleastitried.mediagarrdServer.service.ServiceConfigService;
 import wellatleastitried.mediagarrdServer.service.SetupService;
 
 @WebMvcTest(ConfigController.class)
+@Import(ServiceConfigService.class)
 class ConfigControllerTest {
 
     private static final ServiceDefinition RADARR = new ServiceDefinition("radarr", List.of("/srv/radarr"));
@@ -50,35 +60,41 @@ class ConfigControllerTest {
     @Autowired
     MockMvc mockMvc;
 
-    @MockBean
+    @MockitoBean
     BackupArchiveService archiveService;
 
-    @MockBean
-    DatabaseService db;
+    @MockitoBean
+    ServiceRepository services;
 
-    @MockBean
+    @MockitoBean
     DockerService docker;
 
-    @MockBean
+    @MockitoBean
     RunStatusBroadcaster broadcaster;
 
-    @MockBean
+    @MockitoBean
     SetupService setup;
 
-    @MockBean
+    @MockitoBean
+    PairingService pairing;
+
+    @MockitoBean
     BackupOrchestratorService orchestrator;
+
+    @MockitoBean
+    BackupRunLifecycle lifecycle;
 
     @BeforeEach
     void setUp() {
-        when(setup.canConfigure(any())).thenReturn(true);
-        when(orchestrator.whileIdle(any())).thenAnswer(invocation -> invocation.<Supplier<?>>getArgument(0).get());
+        ApiTestAuth.accept(pairing);
+        when(lifecycle.whileIdle(any())).thenAnswer(invocation -> invocation.<Supplier<?>>getArgument(0).get());
         when(orchestrator.getInterval()).thenReturn(Duration.ofHours(6));
         when(archiveService.retentionCount()).thenReturn(4);
     }
 
     @Test
     void rejectsConfigChangesWhileBackupIsRunning() throws Exception {
-        doThrow(new BackupOrchestratorService.BackupInProgressException("busy")).when(orchestrator).whileIdle(any());
+        doThrow(new BackupInProgressException("busy")).when(lifecycle).whileIdle(any());
 
         mockMvc.perform(json(post("/api/v1/services"), RADARR_JSON))
             .andExpect(status().isConflict())
@@ -87,8 +103,8 @@ class ConfigControllerTest {
         mockMvc.perform(json(put("/api/v1/services/radarr"), RADARR_JSON)).andExpect(status().isConflict());
         mockMvc.perform(json(put("/api/v1/config"), "{\"retentionCount\": 3}")).andExpect(status().isConflict());
 
-        verify(db, never()).addService(any());
-        verify(db, never()).removeService(anyString());
+        verify(services, never()).addService(any());
+        verify(services, never()).removeService(anyString());
         verify(archiveService, never()).updateSettings(any(), any());
         verify(broadcaster, never()).publishConfigChanged();
         verify(broadcaster, never()).publishBackupsChanged();
@@ -96,19 +112,43 @@ class ConfigControllerTest {
 
     @Test
     void requiresSetupSessionUntilSetupIsComplete() throws Exception {
-        when(setup.canConfigure(any())).thenReturn(false);
-
-        mockMvc.perform(get("/api/v1/services"))
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/v1/services"))
             .andExpect(status().isUnauthorized())
             .andExpect(jsonPath("$.error").exists());
-        mockMvc.perform(json(post("/api/v1/services"), RADARR_JSON))
+        mockMvc.perform(json(MockMvcRequestBuilders.post("/api/v1/services"), RADARR_JSON))
             .andExpect(status().isUnauthorized());
-        mockMvc.perform(json(put("/api/v1/config"), "{\"backupLocation\": \"/new\"}"))
+        mockMvc.perform(json(MockMvcRequestBuilders.put("/api/v1/config"), "{\"backupLocation\": \"/new\"}"))
             .andExpect(status().isUnauthorized());
 
-        verify(db, never()).fetchServices();
-        verify(db, never()).addService(any());
+        verify(services, never()).fetchServices();
+        verify(services, never()).addService(any());
         verify(archiveService, never()).updateSettings(any(), any());
+    }
+
+    @Test
+    void aSetupSessionIsEnoughBeforeSetupCompletes() throws Exception {
+        when(setup.canConfigure("session")).thenReturn(true);
+        when(services.fetchServices()).thenReturn(List.of(RADARR));
+
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/v1/services").cookie(new Cookie(SetupInterceptor.SESSION_COOKIE, "session")))
+            .andExpect(status().isOk());
+    }
+
+    @Test
+    void aSetupSessionIsIgnoredAfterSetupCompletes() throws Exception {
+        when(setup.isCompleted()).thenReturn(true);
+        when(setup.canConfigure("session")).thenReturn(true);
+
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/v1/services").cookie(new Cookie(SetupInterceptor.SESSION_COOKIE, "session")))
+            .andExpect(status().isUnauthorized())
+            .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, "Bearer"));
+    }
+
+    @Test
+    void aWrongTokenIsRejectedEvenBeforeSetupCompletes() throws Exception {
+        mockMvc.perform(MockMvcRequestBuilders.get("/api/v1/services").header(HttpHeaders.AUTHORIZATION, "Bearer wrong"))
+            .andExpect(status().isUnauthorized())
+            .andExpect(jsonPath("$.error").value("Invalid or revoked token, pair this client again"));
     }
 
     @Test
@@ -159,7 +199,7 @@ class ConfigControllerTest {
 
     @Test
     void listsServices() throws Exception {
-        when(db.fetchServices()).thenReturn(List.of(RADARR));
+        when(services.fetchServices()).thenReturn(List.of(RADARR));
 
         mockMvc.perform(get("/api/v1/services"))
             .andExpect(status().isOk())
@@ -170,27 +210,27 @@ class ConfigControllerTest {
 
     @Test
     void addsNormalizedService() throws Exception {
-        when(db.fetchService("radarr")).thenReturn(Optional.empty());
+        when(services.fetchService("radarr")).thenReturn(Optional.empty());
 
         mockMvc.perform(json(post("/api/v1/services"), "{\"name\": \" radarr \", \"paths\": [\"/srv/radarr/\", \"\"]}"))
             .andExpect(status().isCreated())
             .andExpect(jsonPath("$.name").value("radarr"))
             .andExpect(jsonPath("$.paths", hasSize(1)));
 
-        verify(db).addService(RADARR);
+        verify(services).addService(RADARR);
         verify(orchestrator).servicesChanged();
         verify(broadcaster).publishConfigChanged();
     }
 
     @Test
     void rejectsDuplicateService() throws Exception {
-        when(db.fetchService("radarr")).thenReturn(Optional.of(RADARR));
+        when(services.fetchService("radarr")).thenReturn(Optional.of(RADARR));
 
         mockMvc.perform(json(post("/api/v1/services"), RADARR_JSON))
             .andExpect(status().isConflict())
             .andExpect(jsonPath("$.error").exists());
 
-        verify(db, never()).addService(any());
+        verify(services, never()).addService(any());
         verify(orchestrator, never()).servicesChanged();
         verify(broadcaster, never()).publishConfigChanged();
     }
@@ -201,18 +241,18 @@ class ConfigControllerTest {
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.error").value("Path must be absolute: relative"));
 
-        verify(db, never()).addService(any());
+        verify(services, never()).addService(any());
     }
 
     @Test
     void updatesServiceKeepingContainersWhenNameUnchanged() throws Exception {
-        when(db.fetchService("radarr")).thenReturn(Optional.of(RADARR));
+        when(services.fetchService("radarr")).thenReturn(Optional.of(RADARR));
 
         mockMvc.perform(json(put("/api/v1/services/radarr"), "{\"name\": \"radarr\", \"paths\": [\"/srv/other\"]}"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.paths[0]").value("/srv/other"));
 
-        verify(db).updateService("radarr", new ServiceDefinition("radarr", List.of("/srv/other")));
+        verify(services).updateService("radarr", new ServiceDefinition("radarr", List.of("/srv/other")));
         verify(orchestrator).servicesChanged();
         verify(docker, never()).removeContainers(anyString());
         verify(broadcaster).publishConfigChanged();
@@ -220,32 +260,32 @@ class ConfigControllerTest {
 
     @Test
     void renamingServiceRemovesOldContainers() throws Exception {
-        when(db.fetchService("RADARR")).thenReturn(Optional.of(RADARR));
-        when(db.fetchService("movies")).thenReturn(Optional.empty());
+        when(services.fetchService("RADARR")).thenReturn(Optional.of(RADARR));
+        when(services.fetchService("movies")).thenReturn(Optional.empty());
 
         mockMvc.perform(json(put("/api/v1/services/RADARR"), "{\"name\": \"movies\", \"paths\": [\"/srv/radarr\"]}"))
             .andExpect(status().isOk());
 
-        verify(db).updateService("radarr", new ServiceDefinition("movies", List.of("/srv/radarr")));
+        verify(services).updateService("radarr", new ServiceDefinition("movies", List.of("/srv/radarr")));
         verify(docker).removeContainers("radarr");
     }
 
     @Test
     void renamingOntoExistingServiceConflicts() throws Exception {
-        when(db.fetchService("radarr")).thenReturn(Optional.of(RADARR));
-        when(db.fetchService("sonarr")).thenReturn(Optional.of(new ServiceDefinition("sonarr", List.of("/srv/sonarr"))));
+        when(services.fetchService("radarr")).thenReturn(Optional.of(RADARR));
+        when(services.fetchService("sonarr")).thenReturn(Optional.of(new ServiceDefinition("sonarr", List.of("/srv/sonarr"))));
 
         mockMvc.perform(json(put("/api/v1/services/radarr"), "{\"name\": \"sonarr\", \"paths\": [\"/srv/radarr\"]}"))
             .andExpect(status().isConflict());
 
-        verify(db, never()).updateService(anyString(), any());
+        verify(services, never()).updateService(anyString(), any());
         verify(orchestrator, never()).servicesChanged();
         verify(broadcaster, never()).publishConfigChanged();
     }
 
     @Test
     void updatingMissingServiceReturnsNotFound() throws Exception {
-        when(db.fetchService("radarr")).thenReturn(Optional.empty());
+        when(services.fetchService("radarr")).thenReturn(Optional.empty());
 
         mockMvc.perform(json(put("/api/v1/services/radarr"), RADARR_JSON))
             .andExpect(status().isNotFound());
@@ -255,19 +295,19 @@ class ConfigControllerTest {
 
     @Test
     void removesServiceAndItsContainers() throws Exception {
-        when(db.fetchService("Radarr")).thenReturn(Optional.of(RADARR));
+        when(services.fetchService("Radarr")).thenReturn(Optional.of(RADARR));
 
         mockMvc.perform(delete("/api/v1/services/Radarr"))
             .andExpect(status().isNoContent());
 
-        verify(db).removeService("radarr");
+        verify(services).removeService("radarr");
         verify(docker).removeContainers("radarr");
         verify(broadcaster).publishConfigChanged();
     }
 
     @Test
     void removingMissingServiceReturnsNotFound() throws Exception {
-        when(db.fetchService("radarr")).thenReturn(Optional.empty());
+        when(services.fetchService("radarr")).thenReturn(Optional.empty());
 
         mockMvc.perform(delete("/api/v1/services/radarr"))
             .andExpect(status().isNotFound());

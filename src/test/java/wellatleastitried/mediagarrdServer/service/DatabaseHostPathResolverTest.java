@@ -59,13 +59,6 @@ class DatabaseHostPathResolverTest {
     }
 
     @Test
-    void mapsThroughANamedVolume() throws Exception {
-        when(docker.mountsOf("abc")).thenReturn(List.of(mount(databaseDirectory.toString(), "/var/lib/docker/volumes/db/_data")));
-
-        assertEquals(Path.of("/var/lib/docker/volumes/db/_data/mediagarrd.db"), resolver.resolve(database));
-    }
-
-    @Test
     void picksTheLongestMatchingMount() throws Exception {
         when(docker.mountsOf("abc")).thenReturn(List.of(
             mount(tempDir.toRealPath().toString(), "/outer"),

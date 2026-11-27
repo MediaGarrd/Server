@@ -1,10 +1,6 @@
 package wellatleastitried.mediagarrdServer.service;
 
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -23,6 +19,7 @@ import com.github.dockerjava.api.model.MountType;
 
 import wellatleastitried.mediagarrdServer.MediaGarrdProperties;
 import wellatleastitried.mediagarrdServer.model.ServiceDefinition;
+import wellatleastitried.mediagarrdServer.utilities.Sha256;
 
 @Service
 public class DockerService {
@@ -44,15 +41,17 @@ public class DockerService {
 
     public String containerFor(ServiceDefinition service) {
         String hash = configHash(service);
+        String reusable = null;
         for (Container container : managedContainers(service.name())) {
-            if (hash.equals(container.getLabels().get(CONFIG_HASH_LABEL))) {
-                LOGGER.debug("[{}] Reusing helper container {}", service.name(), container.getId());
-                return container.getId();
+            if (reusable == null && hash.equals(container.getLabels().get(CONFIG_HASH_LABEL))) {
+                reusable = container.getId();
+                LOGGER.debug("[{}] Reusing helper container {}", service.name(), reusable);
+                continue;
             }
-            LOGGER.info("[{}] Service config changed, removing stale helper container {}", service.name(), container.getId());
+            LOGGER.info("[{}] Removing stale helper container {}", service.name(), container.getId());
             removeContainer(container.getId());
         }
-        return createContainer(service, hash);
+        return reusable != null ? reusable : createContainer(service, hash);
     }
 
     public InputStream copyFrom(String containerId, String hostPath) {
@@ -78,12 +77,7 @@ public class DockerService {
 
     String configHash(ServiceDefinition service) {
         String fingerprint = helperImage + "\n" + String.join("\n", service.paths().stream().sorted().toList());
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(fingerprint.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);
-        }
+        return Sha256.hex(fingerprint);
     }
 
     private List<Container> managedContainers(String serviceName) {
@@ -121,9 +115,9 @@ public class DockerService {
                 if (!client.pullImageCmd(helperImage).start().awaitCompletion(IMAGE_PULL_TIMEOUT_MINUTES, TimeUnit.MINUTES)) {
                     throw new IllegalStateException("Timed out pulling helper image " + helperImage);
                 }
-            } catch (InterruptedException iE) {
+            } catch (InterruptedException ex) {
                 Thread.currentThread().interrupt();
-                throw new IllegalStateException("Interrupted while pulling helper image " + helperImage, iE);
+                throw new IllegalStateException("Interrupted while pulling helper image " + helperImage, ex);
             }
         }
     }

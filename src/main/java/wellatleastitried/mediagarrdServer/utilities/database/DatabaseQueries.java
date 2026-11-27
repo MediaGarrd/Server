@@ -42,6 +42,14 @@ public class DatabaseQueries {
         value TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS paired_clients (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        last_used_at TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_backups_start_time ON backups(start_time);
     CREATE INDEX IF NOT EXISTS idx_backup_services_service_name ON backup_services(service_name);
     """;
@@ -73,6 +81,13 @@ public class DatabaseQueries {
 
     public static final String FETCH_LATEST_RECORD = """
     SELECT id, archive_id, start_time, end_time, status, file_path, error_message FROM backups
+    ORDER BY start_time DESC
+    LIMIT 1;
+    """;
+
+    public static final String FETCH_LAST_SUCCESSFUL_START = """
+    SELECT start_time FROM backups
+    WHERE status IN ('completed', 'partial')
     ORDER BY start_time DESC
     LIMIT 1;
     """;
@@ -124,6 +139,34 @@ public class DatabaseQueries {
     public static final String UPSERT_SETTING = """
     INSERT INTO settings (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+    """;
+
+    public static final String ADD_PAIRED_CLIENT = """
+    INSERT INTO paired_clients (id, name, token_hash, created_at) VALUES (?, ?, ?, ?);
+    """;
+
+    public static final String FETCH_PAIRED_CLIENTS = """
+    SELECT id, name, created_at, last_used_at FROM paired_clients
+    ORDER BY created_at, id;
+    """;
+
+    public static final String FETCH_PAIRED_CLIENT_BY_HASH = """
+    SELECT id, name, created_at, last_used_at FROM paired_clients
+    WHERE token_hash = ?;
+    """;
+
+    public static final String DELETE_PAIRED_CLIENT = """
+    DELETE FROM paired_clients
+    WHERE id = ?;
+    """;
+
+    public static final String TOUCH_PAIRED_CLIENT = """
+    UPDATE paired_clients SET last_used_at = ?
+    WHERE id = ?;
+    """;
+
+    public static final String COUNT_PAIRED_CLIENTS = """
+    SELECT COUNT(*) FROM paired_clients;
     """;
 
     public record Migration(int version, String sql) {}

@@ -5,10 +5,8 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.DigestInputStream;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
-import java.util.HexFormat;
+import wellatleastitried.mediagarrdServer.utilities.Sha256;
 
 public record BackupArchive(
     String id,
@@ -27,10 +25,10 @@ public record BackupArchive(
     }
 
     public String generateChecksum() {
-        try (DigestInputStream in = new DigestInputStream(Files.newInputStream(path), MessageDigest.getInstance("SHA-256"))) {
+        try (DigestInputStream in = new DigestInputStream(Files.newInputStream(path), Sha256.newDigest())) {
             in.transferTo(OutputStream.nullOutputStream());
-            return HexFormat.of().formatHex(in.getMessageDigest().digest());
-        } catch (IOException | NoSuchAlgorithmException e) {
+            return Sha256.hex(in.getMessageDigest().digest());
+        } catch (IOException e) {
             return "";
         }
     }

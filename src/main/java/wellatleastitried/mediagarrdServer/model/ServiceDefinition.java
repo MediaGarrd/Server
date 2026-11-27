@@ -7,6 +7,8 @@ import java.util.regex.Pattern;
 
 public record ServiceDefinition(String name, List<String> paths) {
 
+    public static final int MAX_PATHS = 32;
+    public static final int MAX_PATH_LENGTH = 4096;
     private static final Pattern VALID_NAME = Pattern.compile("[A-Za-z0-9][A-Za-z0-9_.-]{0,63}");
 
     public ServiceDefinition {
@@ -28,7 +30,13 @@ public record ServiceDefinition(String name, List<String> paths) {
         if (paths.isEmpty()) {
             throw new IllegalArgumentException("Service '" + name + "' needs at least one path");
         }
+        if (paths.size() > MAX_PATHS) {
+            throw new IllegalArgumentException("Service '" + name + "' has more than " + MAX_PATHS + " paths");
+        }
         for (String path : paths) {
+            if (path.length() > MAX_PATH_LENGTH) {
+                throw new IllegalArgumentException("Path is longer than " + MAX_PATH_LENGTH + " characters");
+            }
             if (!path.startsWith("/")) {
                 throw new IllegalArgumentException("Path must be absolute: " + path);
             }

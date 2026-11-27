@@ -3,7 +3,6 @@ package wellatleastitried.mediagarrdServer.service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -44,16 +43,12 @@ public class ContainerEnvironment {
     }
 
     public List<String> containerIdCandidates() {
-        List<String> candidates = new ArrayList<>();
         Optional<String> mounted = mountedContainerId();
         if (mounted.isPresent()) {
             return List.of(mounted.get());
         }
         String name = hostname.get();
-        if (name != null && !name.isBlank() && !candidates.contains(name.strip())) {
-            candidates.add(name.strip());
-        }
-        return candidates;
+        return name == null || name.isBlank() ? List.of() : List.of(name.strip());
     }
 
     private Optional<String> mountedContainerId() {

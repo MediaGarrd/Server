@@ -11,7 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -19,20 +19,23 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.server.ResponseStatusException;
 
 import wellatleastitried.mediagarrdServer.dto.BackupDto;
 import wellatleastitried.mediagarrdServer.dto.BackupRunDto;
+import wellatleastitried.mediagarrdServer.dto.PublicHealthDto;
 import wellatleastitried.mediagarrdServer.dto.ScheduleUpdateRequest;
 import wellatleastitried.mediagarrdServer.dto.ServerStatusDto;
 import wellatleastitried.mediagarrdServer.model.BackupArchive;
 import wellatleastitried.mediagarrdServer.model.BackupRunResult;
 import wellatleastitried.mediagarrdServer.service.BackupArchiveService;
+import wellatleastitried.mediagarrdServer.service.BackupNotFoundException;
 import wellatleastitried.mediagarrdServer.service.BackupOrchestratorService;
 import wellatleastitried.mediagarrdServer.service.RunStatusBroadcaster;
+import wellatleastitried.mediagarrdServer.utilities.LogSanitizer;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -50,12 +53,17 @@ public class BackupController {
         this.broadcaster = broadcaster;
     }
 
+    @PublicEndpoint(tokenOptional = true)
     @GetMapping("/health")
-    public ServerStatusDto health() {
+    public Object health(@RequestAttribute(name = ApiAuthInterceptor.CLIENT_ID_ATTRIBUTE, required = false) String clientId) {
         LOGGER.debug("GET /api/v1/health, running={}, interval={}", orchestratorService.isRunning(), orchestratorService.getInterval());
+        if (clientId == null) {
+            return new PublicHealthDto(true, orchestratorService.getInterval());
+        }
         return status(orchestratorService.getInterval());
     }
 
+    @SetupSessionAllowed
     @PutMapping("/schedule")
     public ServerStatusDto updateSchedule(@RequestBody ScheduleUpdateRequest request) {
         LOGGER.info("PUT /api/v1/schedule, requestedInterval={}", request.backupInterval());
@@ -75,46 +83,44 @@ public class BackupController {
 
     @GetMapping("/backups/latest")
     public BackupDto latestBackup() {
-        LOGGER.info("GET /api/v1/backups/latest");
+        LOGGER.debug("GET /api/v1/backups/latest");
         BackupArchive archive = archiveService.latest()
-            .orElseThrow(() -> notFound("No backup archives found"));
-        LOGGER.info("Latest backup: {}", archive.fileName());
+            .orElseThrow(() -> new BackupNotFoundException("No backup archives found"));
+        LOGGER.debug("Latest backup: {}", archive.fileName());
         return toDto(archive);
     }
 
     @GetMapping("/backups/{id}")
     public BackupDto backupById(@PathVariable String id) {
-        LOGGER.info("GET /api/v1/backups/{}", id);
+        LOGGER.debug("GET /api/v1/backups/{}", LogSanitizer.clean(id));
         return archiveService.byId(id)
             .map(this::toDto)
-            .orElseThrow(() -> notFound("Backup not found: " + id, "Backup not found"));
+            .orElseThrow(() -> new BackupNotFoundException("Backup not found"));
     }
 
     @GetMapping("/backups/{id}/download")
     public ResponseEntity<Resource> downloadById(@PathVariable String id) {
-        LOGGER.info("GET /api/v1/backups/{}/download", id);
+        LOGGER.debug("GET /api/v1/backups/{}/download", LogSanitizer.clean(id));
         BackupArchive archive = archiveService.byId(id)
-            .orElseThrow(() -> notFound("Download requested for missing backup: " + id, "Backup not found"));
+            .orElseThrow(() -> new BackupNotFoundException("Backup not found"));
         return downloadResponse(archive);
     }
 
     @GetMapping("/backups/latest/download")
     public ResponseEntity<Resource> downloadLatest() {
-        LOGGER.info("GET /api/v1/backups/latest/download");
+        LOGGER.debug("GET /api/v1/backups/latest/download");
         BackupArchive archive = archiveService.latest()
-            .orElseThrow(() -> notFound("Download requested but no archives exist", "No backup archives found"));
+            .orElseThrow(() -> new BackupNotFoundException("No backup archives found"));
         return downloadResponse(archive);
     }
 
     @DeleteMapping("/backups/{id}")
     public ResponseEntity<Void> deleteBackup(@PathVariable String id) {
-        LOGGER.info("DELETE /api/v1/backups/{}", id);
-        boolean deleted = archiveService.deleteById(id);
-        if (!deleted) {
-            LOGGER.warn("Delete failed: backup not found: {}", id);
-            return ResponseEntity.notFound().build();
+        LOGGER.info("DELETE /api/v1/backups/{}", LogSanitizer.clean(id));
+        if (!archiveService.deleteById(id)) {
+            throw new BackupNotFoundException("Backup not found");
         }
-        LOGGER.info("Backup deleted: {}", id);
+        LOGGER.info("Backup deleted: {}", LogSanitizer.clean(id));
         broadcaster.publishBackupsChanged();
         return ResponseEntity.noContent().build();
     }
@@ -139,20 +145,19 @@ public class BackupController {
     private ResponseEntity<Resource> downloadResponse(BackupArchive archive) {
         Resource file = new FileSystemResource(archive.path());
         if (!file.exists()) {
-            LOGGER.error("Archive file missing on disk: {}", archive.path());
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Backup file missing on disk");
+            LOGGER.error("Archive file missing on disk: {}", LogSanitizer.clean(archive.path()));
+            throw new BackupNotFoundException("Backup file missing on disk");
         }
 
         try {
             LOGGER.info("Serving download: {} ({} bytes)", archive.fileName(), archive.sizeBytes());
             return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + archive.fileName() + "\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(archive.fileName()).build().toString())
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .contentLength(file.contentLength())
                 .body(file);
         } catch (IOException e) {
-            LOGGER.error("Failed to read backup file: {}", archive.path(), e);
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to read backup file");
+            throw new IllegalStateException("Failed to read backup file", e);
         }
     }
 
@@ -162,14 +167,5 @@ public class BackupController {
 
     private BackupDto toDto(BackupArchive archive) {
         return new BackupDto(archive.id(), archive.fileName(), archive.sizeBytes(), archive.createdAt());
-    }
-
-    private ResponseStatusException notFound(String logMessage) {
-        return notFound(logMessage, logMessage);
-    }
-
-    private ResponseStatusException notFound(String logMessage, String responseMessage) {
-        LOGGER.warn(logMessage);
-        return new ResponseStatusException(HttpStatus.NOT_FOUND, responseMessage);
     }
 }

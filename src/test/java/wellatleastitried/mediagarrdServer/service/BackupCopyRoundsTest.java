@@ -42,6 +42,8 @@ import wellatleastitried.mediagarrdServer.model.BackupArchive;
 import wellatleastitried.mediagarrdServer.model.BackupRunResult;
 import wellatleastitried.mediagarrdServer.model.BackupServiceResult;
 import wellatleastitried.mediagarrdServer.model.ServiceDefinition;
+import wellatleastitried.mediagarrdServer.repository.BackupRecordRepository;
+import wellatleastitried.mediagarrdServer.repository.ServiceRepository;
 import wellatleastitried.mediagarrdServer.service.ServiceBackupRunnerTest.Item;
 
 @Timeout(60)
@@ -56,10 +58,10 @@ class BackupCopyRoundsTest {
     private final DockerService docker = mock(DockerService.class);
     private final BackupArchiveService archives = mock(BackupArchiveService.class);
     private final DatabaseSnapshotService snapshots = mock(DatabaseSnapshotService.class);
-    private final DatabaseService db = mock(DatabaseService.class);
+    private final ServiceRepository serviceRepository = mock(ServiceRepository.class);
     private final Map<String, Supplier<InputStream>> sources = new HashMap<>();
     private final BackupOrchestratorService orchestrator = new BackupOrchestratorService(
-        new ServiceBackupRunner(docker, new ZipCompression(1)), archives, mock(BackupScheduleService.class), snapshots, db, mock(RunStatusBroadcaster.class));
+        new ServiceBackupRunner(docker, new ZipCompression(1)), archives, mock(BackupScheduleService.class), snapshots, serviceRepository, mock(BackupRecordRepository.class), new BackupRunLifecycle(mock(RunStatusBroadcaster.class)), mock(WebhookService.class));
 
     @BeforeEach
     void setUp() throws Exception {
@@ -100,7 +102,7 @@ class BackupCopyRoundsTest {
     }
 
     private BackupRunResult runBackup(ServiceDefinition... services) {
-        when(db.fetchServices()).thenReturn(List.of(services));
+        when(serviceRepository.fetchServices()).thenReturn(List.of(services));
         return orchestrator.runBackup();
     }
 

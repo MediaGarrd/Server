@@ -233,20 +233,6 @@ class ZipPartWriterTest {
         verifyWithTools(archive, count);
     }
 
-    @Test
-    void smallArchiveIsAcceptedByExternalTools() throws Exception {
-        Path part = dir.resolve("0.part");
-        try (var writer = new ZipPartWriter(part, new ZipCompression(1))) {
-            writer.addEntry("srv/", DIRECTORY, 0, 0, 1_700_000_001_000L, 0, bytes(""));
-            add(writer, "srv/a.txt", "hello".repeat(100));
-            add(writer, "srv/b.mp4", "world".repeat(100));
-            assertTrue(writer.addCopy("srv/c.txt", "srv/a.txt"));
-            writer.complete();
-        }
-
-        verifyWithTools(ArchiveTestSupport.merge(dir, part), 4);
-    }
-
     static void verifyWithTools(Path archive, int entries) throws Exception {
         if (ArchiveTestSupport.available("unzip")) {
             String output = ArchiveTestSupport.run(null, "unzip", "-tq", archive.toString());

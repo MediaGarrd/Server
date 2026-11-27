@@ -20,13 +20,17 @@ public class MediaGarrdUtils {
         return formattedTime;
     }
 
+    public static Instant parseTime(String time) throws ParseException {
+        return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").parse(time).toInstant();
+    }
+
     public static long getDurationMs(String startTimeStr, String endTimeStr) {
         try {
             SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
             Date startDate = sdf.parse(startTimeStr);
             Date endDate = sdf.parse(endTimeStr);
             return endDate.getTime() - startDate.getTime();
-        } catch (ParseException pE) {}
+        } catch (ParseException e) {}
         return -1;
     }
 }

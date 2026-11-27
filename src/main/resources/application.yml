@@ -17,3 +17,4 @@ mediagarrd:
   update-repository: ${MEDIAGARRD_UPDATE_REPOSITORY:MediaGarrd/Server}
   github-api-base-url: ${MEDIAGARRD_GITHUB_API_URL:https://api.github.com}
   update-check-interval: ${MEDIAGARRD_UPDATE_CHECK_INTERVAL:PT24H}
+  open-pairing: ${MEDIAGARRD_OPEN_PAIRING:false}

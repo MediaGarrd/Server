@@ -7,6 +7,7 @@ public class DatabaseUtils {
     public static final String SETUP_COMPLETED_SETTING = "setup_completed";
     public static final String BACKUP_INTERVAL_SETTING = "backup_interval";
     public static final String RETENTION_COUNT_SETTING = "retention_count";
+    public static final String FAILURE_WEBHOOK_SETTING = "failure_webhook_url";
 
     // Status used for the overall backup AND the individual service runners
     public class Status {

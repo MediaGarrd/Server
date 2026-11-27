@@ -6,7 +6,6 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -14,7 +13,6 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 
@@ -22,6 +20,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import wellatleastitried.mediagarrdServer.service.ZipFormat.Entry;
+import wellatleastitried.mediagarrdServer.utilities.Sha256;
 
 final class ZipPartMerger {
 
@@ -37,7 +36,7 @@ final class ZipPartMerger {
 
     static Result merge(List<Path> snapshotParts, List<Path> parts, Path output, Path scratchDirectory) throws IOException {
         Path names = scratchDirectory.resolve("merge-names" + ZipPartWriter.INDEX_SUFFIX);
-        MessageDigest digest = sha256();
+        MessageDigest digest = Sha256.newDigest();
         try (OutputStream file = Files.newOutputStream(output); Sink sink = new Sink(file, digest); NameIndex seen = new NameIndex(names)) {
             List<Path> ordered = new ArrayList<>(snapshotParts);
             ordered.addAll(parts);
@@ -58,7 +57,7 @@ final class ZipPartMerger {
             sink.write(ZipFormat.endOfArchive(entries, centralSize, centralStart));
             sink.flush();
             LOGGER.debug("Merged {} part(s) into {} entries", ordered.size(), entries);
-            return new Result(HexFormat.of().formatHex(digest.digest()), entries, sink.written());
+            return new Result(Sha256.hex(digest.digest()), entries, sink.written());
         } finally {
             Files.deleteIfExists(names);
         }
@@ -102,14 +101,6 @@ final class ZipPartMerger {
             throw new IOException("Unable to read the index of archive part " + part, e);
         }
         return count;
-    }
-
-    private static MessageDigest sha256() {
-        try {
-            return MessageDigest.getInstance("SHA-256");
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 is unavailable", e);
-        }
     }
 
     private static final class NameIndex implements AutoCloseable {

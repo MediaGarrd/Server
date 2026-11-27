@@ -49,8 +49,10 @@ class ArchiveInteropTest {
         Item symlink = link("data/latest", TarConstants.LF_SYMLINK, "id_rsa");
         symlink.entry().setModTime(new Date(MTIME));
         Item hardLink = link("data/id_rsa.bak", TarConstants.LF_LINK, "data/id_rsa");
+        Item movie = file("data/movie.mkv", "stored ".repeat(1000));
+        movie.entry().setModTime(new Date(MTIME));
         Path part = dir.resolve("0.part");
-        ServiceBackupRunner.archive(tar(folder, secret, text, empty, symlink, hardLink), "/srv/data", part, new ZipCompression(1));
+        ServiceBackupRunner.archive(tar(folder, secret, text, empty, symlink, hardLink, movie), "/srv/data", part, new ZipCompression(1));
         return ArchiveTestSupport.merge(dir, part);
     }
 
@@ -97,6 +99,6 @@ class ArchiveInteropTest {
 
     @Test
     void everyReaderAcceptsTheArchive() throws Exception {
-        ZipPartWriterTest.verifyWithTools(archive(), 6);
+        ZipPartWriterTest.verifyWithTools(archive(), 7);
     }
 }

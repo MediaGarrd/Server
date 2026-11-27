@@ -22,6 +22,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import wellatleastitried.mediagarrdServer.model.BackupServiceResult;
+import wellatleastitried.mediagarrdServer.repository.SqliteDatabase;
 
 @Service
 public class DatabaseSnapshotService {
@@ -34,11 +35,11 @@ public class DatabaseSnapshotService {
     private static final List<String> DATABASE_SIDECAR_SUFFIXES = List.of("", "-journal", "-wal", "-shm");
     private static final String SNAPSHOT_FILE = "snapshot.db";
 
-    private final DatabaseService db;
+    private final SqliteDatabase db;
     private final DatabaseHostPathResolver hostPaths;
     private final ZipCompression compression;
 
-    public DatabaseSnapshotService(DatabaseService db, DatabaseHostPathResolver hostPaths, ZipCompression compression) {
+    public DatabaseSnapshotService(SqliteDatabase db, DatabaseHostPathResolver hostPaths, ZipCompression compression) {
         this.db = db;
         this.hostPaths = hostPaths;
         this.compression = compression;

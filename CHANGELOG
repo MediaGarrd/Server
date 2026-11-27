@@ -1,10 +1,123 @@
 # CHANGELOG
 
-## TBD
-- Adding more detailed logging for service runners
-- Renaming QBittorrent's "graveyard" directory to "saved-torrents" to make it less ambiguous
+Everything in this file is part of version 0.1.0, the first release. Entries are grouped by the date they were made.
+
+## 11-24-26
+- Archives are ordered, listed and pruned by the UTC timestamp in their file name (`yyyyMMdd-HHmmss-SSS-media-backup.zip`) instead of the file's last-modified time, so copying or restoring files no longer changes which archive is the newest or gets deleted by retention; `createdAt` in `GET /api/v1/backups` comes from the same timestamp (millisecond precision), and an archive whose name has no valid timestamp still uses its last-modified time
+- If the database is found corrupt while the server is running, it is moved aside and replaced as before, and now setup also reopens without a restart: a new Setup PIN is logged, `/config` works again, paired Clients must pair again (they get `401` until then), open event streams are closed and unconfirmed pairings are dropped, and the backup location, retention and schedule go back to the defaults until set again
+- The API docs list the `409` answers for `POST /backups/run` (a run is already in progress, or no services are configured), for `PUT /config` and the service endpoints while a backup is running, and for a service name that already exists
+- The start page says the `/config` setup page is only available until setup is finished
+- `.dockerignore` skips `bin/`, `.classpath` and `test/`
+
+## 11-22-26
+- Backup run scratch space is now `.mediagarrd-runs/` inside the backup folder instead of `runs/`, and startup cleanup only removes folders in it and `*-media-backup.zip.tmp` files; a `runs/` folder or other `.zip.tmp` files you keep in the backup folder are left alone
+- A finished archive is flushed to disk before it is moved into place and the backup folder is flushed after the move, both before retention deletes any older archive, so a power loss cannot leave a truncated newest archive next to an already deleted good one
+- The image has a health check against `/api/v1/health` on `SERVER_PORT` (default `8080`) and `.dockerignore` skips `.claude`, `.jj`, `ref`, `vendor` and the compose files
+- Restore docs use `sudo` for `mgrecover` and `bsdtar`, because archives belong to root
+- The backup interval must be between 15 minutes and 365 days: `PUT /api/v1/schedule` answers `400` for a missing, zero, negative, shorter or longer value and saves nothing; a stored or `MEDIAGARRD_BACKUP_INTERVAL` value outside that range is ignored with a warning (the default is `PT12H`); the setup page limits the hours field to 0.25 to 8760
+- The pair-before-setup `409` now says `This server has not finished setup yet. Finish it on the server's /config page, then pair.`
+- Setup page: the Setup PIN error is red and Finish Setup sits under Configured Services
+- `POST /api/v1/setup/complete` answers `200` with `{"pairingPin": "NNNNNN"}` instead of an empty `204` (`pairingPin` is `null` when no PIN applies), and the setup page shows the Pairing PIN with a copy button after Finish Setup; it is still printed in the logs
+- Pairing is confirmed by the Client's first request with its token: `POST /pair` creates a pending pairing in memory, and only the first authenticated request with that token stores the client and closes PIN pairing or spends the pairing code. A Client whose reply was lost can pair again with the same PIN or code
+- A pending pairing expires after 5 minutes, at most 10 are kept, a restart drops them, and they are not listed or counted as paired clients; if several pair with one PIN or code, the first to confirm wins and the others get `401`
+- A pairing code that confirms the first stored client also closes PIN pairing; `POST /setup/complete` answers `410` for a second concurrent finish instead of rotating the PIN, and the setup page disables Finish while it is in flight
+- Pairing PIN is checked without resetting the wrong-attempt counter until pairing closes
+- Older Clients keep working: they store the token without confirming, and their first request with it (within 5 minutes) confirms the pairing. A new Client confirms against any Server straight away
+- No database change
+
+## 11-21-26
+- Added an optional failure webhook: when a backup run fails or only partly succeeds (scheduled or manual), the server posts a message to a URL you set, so a failed scheduled backup (which only retries after the next interval) is noticed. Set it on the setup page, with `PUT /api/v1/notifications/webhook`, or from the Client; `GET` reports only `configured` and `scheme://host`, and `POST /api/v1/notifications/webhook/test` sends a test (one every 10 seconds, `429` with `Retry-After` otherwise)
+- The message is a Discord body (with `allowed_mentions` blocking pings), a Slack body, or a generic JSON body with `event`, `time`, `error`, `failedServices`, `archiveId`, `content` and `text`, chosen by host; it is sent in the background with timeouts, no redirects and no retry, and a failed delivery is only a warning that names the host
+- The webhook URL is never returned, logged or echoed in an error, and is kept in plain text in the settings database, so it is also inside backup archives
+- Fixed scheduled backups never running on a server restarted more often than its backup interval: the next backup is now due one interval after the last completed or partial backup, and an overdue one runs within about 30 seconds of start
+- A server with no completed backup runs its first one soon after setup is finished; while setup is still open, and for installs that never finished setup and have no backup yet, it waits one interval from start
+- Changing the backup interval counts from the last completed or partial backup instead of from the change
+- Fixed the setup page being wider than a phone screen: grid columns, form rows and notes shrink to the screen and the webhook buttons wrap
+
+## 11-19-26
+- Every error answers `{"error": "<message>"}`, including `404`, `405` and the missing-backup and delete cases that used Spring's default body; a `5xx` says `Internal error`, except a failed `POST /backups/run`, which keeps the run's failure reason in the `500` body for the Client dashboard
+- Request bodies over 64 KiB answer `413`, a service may have at most 32 paths of 4096 characters, and a PIN, code or backup location has a length limit
+- Responses carry `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, a `default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'` Content-Security-Policy and `Cache-Control: no-store` (not on the setup page's css and js)
+- The setup cookie is `Secure` over HTTPS or `X-Forwarded-Proto: https`, and a setup session expires after 30 minutes without use
+- Backup folders and the data folder the server creates are `0700`, archives and the database file `0600`; restore with `sudo`
+- Retention deletes only archives the server has a record of; others are kept and listed
+- Unpairing the last Client reopens pairing and logs a fresh `Pairing PIN`; opening or closing pairing no longer clears a lockout
+- Before setup is finished the `401` message says so
+- Fixed a helper container left behind when a stale one was listed after the matching one, and archive ids that dropped every `.zip` in a name
+- The setup page keeps the workspace hidden when unlocking fails, shows the lockout wait, labels its path fields and table, shows a visible focus outline and scrolls its table on narrow screens
+- Log values from requests have line breaks removed
+- After setup, every `/api/v1` endpoint except `GET /health` (reduced), `GET /version`, `GET /setup`, `POST /setup/session` and `POST /pair` needs `Authorization: Bearer <token>`, and anything not on that list is refused by default, including `/events` and backup downloads
+- A client gets its token with `POST /api/v1/pair` and the PIN printed in the logs as `Pairing PIN`; the token is returned once, only its SHA-256 hash is stored (new `paired_clients` table), and it is never logged
+- When setup is finished the PIN is replaced with a fresh `Pairing PIN`, and it stops working as soon as one client pairs; an install with no paired client (including every install upgraded from an earlier version) prints a `Pairing PIN` on start
+- `MEDIAGARRD_OPEN_PAIRING=true` opens pairing with a new PIN on start even when clients are paired, and logs a warning on every start while it is set
+- A paired client can create a single-use pairing code valid for 10 minutes (`POST /api/v1/pairing-codes`), list paired clients (`GET /api/v1/clients`), and unpair any client including itself (`DELETE /api/v1/clients/{id}`), which also closes that client's event streams
+- Five wrong PINs lock the setup PIN and the pairing PIN together for 10 minutes (`429` with `Retry-After`), and ten wrong pairing codes lock codes separately; the setup PIN had no time lock before
+- `GET /api/v1/health` returns only `healthy` and `backupInterval` without a token, the full status with one, and `401` for a token that is not valid
+- Setup page endpoints accept the setup session only until setup is finished, and the check no longer depends on the raw URL, so path variants such as `/api/v1/services;x` no longer bypass it
+- A request body that is missing or not JSON is answered with `400` and `{"error": "..."}`
+- Every response carries `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`, so the setup page cannot be embedded in another page
+- An unexpected failure (HTTP 500) answers with `{"error": "Internal error"}` and keeps the details in the log; a backup run where every service failed still reports its reason
+- New `docs/https.md` for running the Server behind nginx or Caddy
+
+## 11-12-26
+- A run rejected before it starts (such as no services configured) publishes no run events
+- A scheduled check with nothing to back up now waits one full interval instead of retrying every 30 seconds, and adding or editing a service makes the schedule due again right away
+- `GET /api/v1/events` also sends `backups-changed` (backup deleted, backup location changed) and `config-changed` (schedule, settings, or services changed), each as `{"at":"<ISO-8601>"}`
+- `GET /api/v1/health` and `GET /api/v1/backups` are logged at DEBUG, so polling no longer fills the log
+- An archive's SHA-256 is now computed while it is written instead of by reading the finished file again, which saves a full pass over every backup
+- Archives are compressed at a lighter level by default (`MEDIAGARRD_COMPRESSION_LEVEL`, `0` to `9`, default `1`), and already-compressed files (images, video, audio, zip, gz and similar) are stored as they are
+- Backups use a fixed amount of memory regardless of how many files or how much data they hold: archives are written as a stream with an on-disk index, so any backup that fits on disk completes
+- The archive writer is our own: zip64 is used automatically for entries over 4 GB, archives over 4 GB, and more than 65,535 entries, and entries now also carry an exact UTC modification time
+- Entry owners are always written as a 4-byte uid/gid (`0x7875`), because bsdtar reads only 2- or 4-byte widths and ignored the shorter form, so `bsdtar -xp` now restores small uids such as 33 (www-data) correctly; the NTFS extra (`0x000A`) is no longer written
+- A symlink inside a copied path that is also configured as its own path is not stored; the configured path is copied from its real content instead, so restoring that path no longer hits a link-versus-directory conflict and the merge never sees a duplicate name
+- A path nested inside another configured path is no longer copied twice: it is skipped when the outer copy includes it, and copied on its own if the outer copy failed, and each service's result reflects its own outcome
+- The database snapshot is taken first, and the live database and its `-journal`, `-wal`, and `-shm` files are left out of service copies only when the snapshot succeeded
+- The container image is pinned to `eclipse-temurin:21.0.13_9-jre` and starts the JVM with G1, a small starting heap, periodic heap trimming, and `-XX:+ExitOnOutOfMemoryError`; the heap cap follows the container memory (`JAVA_TOOL_OPTIONS`, see `docs/settings.md`), and lazy initialization is no longer used
+
+## 11-11-26
+- `GET /api/v1/events` is a live Server-Sent Events stream that needs no setup session: `state` on connect, `run-started` and `run-finished` (`COMPLETED`, `PARTIAL`, or `FAILED`) the moment a run begins and ends, and a `ping` every 20 seconds
+- At most 16 listeners are served (more get `503`), a slow or dead listener is dropped without slowing a backup, and each stream ends cleanly after 4.5 minutes so clients reconnect without errors in the log
+- Fixed a failed delete of a run's temporary directory leaving the server stuck on "running" and rejecting configuration changes until restart
+- The server knows its version (`0.1.0`) and checks GitHub for the latest `MediaGarrd/Server` release shortly after starting and then daily
+- `GET /api/v1/version` (no setup session needed) reports the current and latest version, whether an update is available, the release link, when the last check ran, and its state (`OK`, `NO_RELEASES`, `ERROR`, or `NOT_CHECKED`)
+- A failed check (offline, rate limited, no release yet) is logged once, shown as a state, and never affects backups
+- `MEDIAGARRD_UPDATE_REPOSITORY`, `MEDIAGARRD_GITHUB_API_URL`, and `MEDIAGARRD_UPDATE_CHECK_INTERVAL` change the repository, API address, and check interval (at least `PT1H`, or the server refuses to start)
+- Scheduled tasks run on two threads (`spring.task.scheduling.pool.size: 2`), so a slow GitHub check cannot delay backups
+
+## 11-05-26
+- Every archive includes a consistent snapshot of the server's own database (settings, services, backup records) at its absolute host path, so the future recovery tool and `bsdtar -xpf <archive> -C /` restore it in place
+- The host path is found by inspecting the server's own container. If that or the snapshot fails, the run is partial with the error logged, and a corrupt or missing database is never replaced by an empty one
+- Database operations wait while the snapshot is taken, so nothing is written mid-copy
+- The snapshot appears as `_mediagarrd-server` in service results and service names, and a service copy of the database file or its `-journal`, `-wal`, and `-shm` files no longer replaces or sits next to it
+- Documented how to restore the database from an archive
+
+## 10-26-26
+- Services are stored in the database and managed from `/config` or `/api/v1/services`, and any service can be backed up
+- Backup location can be changed at runtime from `/config` or `PUT /api/v1/config`
+- Backup interval and retention count are stored in the database, retention is settable through `PUT /api/v1/config`, and `GET /api/v1/config` returns every setting
+- Configuration changes are rejected while a backup is running, so a run never sees its services change
+- One runner now copies each service's paths through a cached, read-only helper container via the Docker socket, replacing the per-service runners
+- Added first-time web setup reachable from the network, unlocked with a single-use PIN printed in the server logs and disabled once setup is finished
+- `docker-compose.example.yml` works without `install.sh`
+- Archives are laid out by absolute host path with no per-service folder, so `bsdtar -xpf <archive> -C /` restores them
+- Archives keep permissions, owners, modification times, symbolic links, and empty directories, and a path that fails to copy leaves no partial files
+- Fixed special files (pipes, devices) being archived as empty regular files
+- Fixed checksums loading the whole archive into memory and dropping leading zeros, and archive sizes over 2 GB being recorded incorrectly
+- Every API endpoint returns errors as `{"error": "..."}` with a matching status code
+- The database schema is verified once and then re-checked with one query per call, rebuilding or upgrading the database when it is deleted, altered, or replaced, and moving a corrupt one aside
+- Fixed migration versioning
+- Added Structurizr diagrams, Lombok for model classes, integration test and issue label workflows, and a pull request check that requires every linked issue to be approved
+
+## 9-23-26
+- Added a database for backup records, with thorough tests
+- Added issue templates
+- Removed auto-routing to `appdata/` within archives so configs keep their actual paths
+
+## 9-16-26
+- More detailed logging for service runners
+- Renamed QBittorrent's "graveyard" directory to "saved-torrents"
 
 ## 9-6-26
-- Abstracting services to make adding new ones easier
-- Adding new tests
-- Project renaming
+- Abstracted services to make adding new ones easier
+- Added new tests
+- Renamed the project

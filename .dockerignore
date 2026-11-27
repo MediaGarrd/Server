@@ -1,5 +1,9 @@
 .git
 .github
+.claude
+.jj
+ref
+vendor
 .vscode
 build
 **/build
@@ -17,6 +21,16 @@ install-util.sh
 install.sh
 LICENSE
 README.md
-docker-compose.yml.example
+docker-compose.example.yml
+docker-compose.yml
+Makefile
 .project
+.classpath
+bin/
+test/
 .settings/
+.note.xnote
+.env
+.env.*
+**/.env
+**/.env.*
